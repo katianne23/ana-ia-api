@@ -1,5 +1,5 @@
 
-const { google } = require('googleapis');
+const { google } = require("googleapis");
 
 // ==========================================
 // CONFIGURAÇÃO DAS PLANILHAS
@@ -17,7 +17,6 @@ const ABA_DEMAIS_GID = 506062902;
 const PLANILHA_CONTATOS_ID = "1Mp_G0e8ZlN-ofQZX0w-wZSUuQgTtuzCHlk7i6HfsiJ4";
 const ABA_CONTATOS_GID = 1846076689;
 
-// IPI padrão
 const IPI_PADRAO = "5,2%";
 
 // ==========================================
@@ -47,7 +46,7 @@ async function conectarGoogle() {
 }
 
 // ==========================================
-// NORMALIZAÇÃO
+// NORMALIZAÇÃO E SINÔNIMOS
 // ==========================================
 
 function normalizarTexto(texto) {
@@ -55,12 +54,42 @@ function normalizarTexto(texto) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
+    .replace(/[×]/g, " X ")
     .replace(/[^\w\s]/g, " ")
+    .replace(/_/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-// Palavras que não ajudam a identificar o produto.
+// Padroniza variações de escrita e termos equivalentes.
+// Amplie esta lista conforme identificar novas variações
+// reais nos pedidos dos clientes.
+
+const SINONIMOS = {
+  BACKAUS: "BACKHAUS",
+  BACKAUSS: "BACKHAUS",
+  BACKHAUSS: "BACKHAUS",
+
+  INOXIDAVEL: "INOX",
+  INOXIDAVEIS: "INOX",
+
+  ACOINOX: "INOX",
+  AISI: "AISI",
+
+  METZENBAUM: "METZENBAUM",
+  METZEMBAUM: "METZENBAUM",
+
+  HISTOMETRO: "HISTEROMETRO",
+
+  COLLIN: "COLLIN",
+
+  YANKAUER: "YANKAUER",
+  YANKAUR: "YANKAUER",
+
+  STEIMAN: "STEIMAN",
+  STEINMAN: "STEIMAN"
+};
+
 const PALAVRAS_IGNORADAS = new Set([
   "QUERO", "COTAR", "COTACAO", "PRECISO",
   "DE", "DO", "DA", "DOS", "DAS",
@@ -69,77 +98,271 @@ const PALAVRAS_IGNORADAS = new Set([
   "NOS", "NAS", "E", "OU", "ME", "ENVIE",
   "INFORME", "PRODUTO", "ITEM", "ITENS",
   "REFERENCIA", "REF", "CODIGO",
-  "UN", "UND", "UNIDADE", "UNIDADES"
+  "UN", "UND", "UNIDADE", "UNIDADES",
+  "QUANTIDADE", "QTD",
+  "MATERIAL", "CONFECCIONADO",
+  "CONFECCIONADA", "FABRICADO",
+  "FABRICADA", "PRODUTO",
+  "CAPACIDADE", "FORMATO", "TIPO",
+  "APROXIMADAMENTE", "APROX"
 ]);
+
+function normalizarToken(token) {
+  return SINONIMOS[token] || token;
+}
 
 function obterTokens(texto) {
   return normalizarTexto(texto)
     .split(" ")
+    .map(normalizarToken)
     .filter(token =>
       token.length > 0 &&
-      !PALAVRAS_IGNORADAS.has(token)
+      !PALAVRAS_IGNORADAS.has(token) &&
+      !/^\d+$/.test(token)
     );
+}
+
+// ==========================================
+// DISTÂNCIA ENTRE PALAVRAS
+// ==========================================
+
+// Permite reconhecer pequenos erros de digitação.
+// Exemplo: METZEMBAUM / METZENBAUM.
+
+function distanciaLevenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+
+  const matriz = [];
+
+  for (let i = 0; i <= b.length; i++) {
+    matriz[i] = [i];
+  }
+
+  for (let j = 0; j <= a.length; j++) {
+    matriz[0][j] = j;
+  }
+
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      const custo = a[j - 1] === b[i - 1] ? 0 : 1;
+
+      matriz[i][j] = Math.min(
+        matriz[i - 1][j] + 1,
+        matriz[i][j - 1] + 1,
+        matriz[i - 1][j - 1] + custo
+      );
+    }
+  }
+
+  return matriz[b.length][a.length];
+}
+
+function tokensParecidos(tokenA, tokenB) {
+  if (tokenA === tokenB) return true;
+
+  if (tokenA.length < 5 || tokenB.length < 5) {
+    return false;
+  }
+
+  const distancia = distanciaLevenshtein(tokenA, tokenB);
+
+  if (Math.min(tokenA.length, tokenB.length) >= 9) {
+    return distancia <= 2;
+  }
+
+  return distancia <= 1;
 }
 
 // ==========================================
 // IDENTIFICAR MEDIDAS
 // ==========================================
 
+// Converte medidas para milímetros.
+// Exemplo:
+// 13 CM = 130 MM
+// 4 MM = 4 MM
+// 0,80 CM = 8 MM
+
+function converterParaMM(valor, unidade) {
+  const numero = Number(
+    String(valor).replace(",", ".")
+  );
+
+  if (!Number.isFinite(numero)) return null;
+
+  if (unidade === "M") return numero * 1000;
+  if (unidade === "CM") return numero * 10;
+
+  return numero;
+}
+
 function extrairMedidas(texto) {
-  const original = String(texto || "")
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .toUpperCase();
+  const original = normalizarTexto(texto);
 
   const medidas = new Set();
 
-  // Exemplo: 35 X 10 MM
-  const dimensoes =
-    original.match(
-      /\b\d+(?:[.,]\d+)?\s*[X×]\s*\d+(?:[.,]\d+)?\s*(?:MM|CM|M)\b/g
-    ) || [];
+  const regex =
+    /\b(\d+(?:[.,]\d+)?)\s*(MM|CM|M)\b/g;
 
-  dimensoes.forEach(item => {
-    const medida = item
-      .replace(/\s+/g, "")
-      .replace("×", "X")
-      .replace(",", ".");
+  let resultado;
 
-    medidas.add(medida);
-  });
+  while ((resultado = regex.exec(original)) !== null) {
+    const valor = converterParaMM(
+      resultado[1],
+      resultado[2]
+    );
 
-  // Exemplo: 27 CM, 4 MM, 0,80 CM
-  const individuais =
-    original.match(
-      /\b\d+(?:[.,]\d+)?\s*(?:MM|CM|M)\b/g
-    ) || [];
-
-  individuais.forEach(item => {
-    const medida = item
-      .replace(/\s+/g, "")
-      .replace(",", ".");
-
-    medidas.add(medida);
-  });
+    if (valor !== null) {
+      medidas.add(Number(valor.toFixed(4)));
+    }
+  }
 
   return [...medidas];
 }
 
-function medidasCompativeis(busca, candidato) {
+function avaliarMedidas(busca, candidato) {
   const medidasBusca = extrairMedidas(busca);
   const medidasCandidato = extrairMedidas(candidato);
 
   if (medidasBusca.length === 0) {
-    return true;
+    return {
+      compativeis: null,
+      cobertura: 1
+    };
   }
 
   if (medidasCandidato.length === 0) {
-    return false;
+    return {
+      compativeis: null,
+      cobertura: 0
+    };
   }
 
-  return medidasBusca.every(medida =>
+  const correspondencias = medidasBusca.filter(medida =>
     medidasCandidato.includes(medida)
   );
+
+  const cobertura =
+    correspondencias.length / medidasBusca.length;
+
+  return {
+    compativeis: cobertura === 1,
+    cobertura
+  };
+}
+
+// ==========================================
+// PESO DAS PALAVRAS
+// ==========================================
+
+function pesoToken(token) {
+  // Material e especificações técnicas ajudam,
+  // mas não devem impedir a localização do produto
+  // quando a descrição comercial não contém esses dados.
+
+  if ([
+    "INOX", "AISI", "ACO",
+    "CIRURGICO", "CIRURGICA"
+  ].includes(token)) {
+    return 0.55;
+  }
+
+  return 1;
+}
+
+// ==========================================
+// SIMILARIDADE INTELIGENTE
+// ==========================================
+
+function calcularSimilaridade(busca, candidato) {
+  const tokensBusca = [...new Set(obterTokens(busca))];
+
+  const tokensNome = [
+    ...new Set(obterTokens(candidato.produto))
+  ];
+
+  const tokensCatalogo = [
+    ...new Set(
+      obterTokens(
+        `${candidato.produto} ${candidato.palavrasChave}`
+      )
+    )
+  ];
+
+  if (!tokensBusca.length || !tokensCatalogo.length) {
+    return {
+      score: 0,
+      correspondencias: 0,
+      coberturaNome: 0
+    };
+  }
+
+  let pesoTotal = 0;
+  let pesoCorrespondente = 0;
+  let correspondencias = 0;
+  let correspondenciasNome = 0;
+
+  for (const tokenBusca of tokensBusca) {
+    const peso = pesoToken(tokenBusca);
+
+    pesoTotal += peso;
+
+    const encontrado = tokensCatalogo.some(tokenCatalogo =>
+      tokensParecidos(tokenBusca, tokenCatalogo)
+    );
+
+    if (encontrado) {
+      pesoCorrespondente += peso;
+      correspondencias++;
+
+      const noNome = tokensNome.some(tokenNome =>
+        tokensParecidos(tokenBusca, tokenNome)
+      );
+
+      if (noNome) {
+        correspondenciasNome++;
+      }
+    }
+  }
+
+  const cobertura =
+    pesoTotal > 0
+      ? pesoCorrespondente / pesoTotal
+      : 0;
+
+  const coberturaNome =
+    tokensBusca.length > 0
+      ? correspondenciasNome / tokensBusca.length
+      : 0;
+
+  // O nome principal tem mais importância que palavras-chave.
+  const score =
+    (cobertura * 0.80) +
+    (coberturaNome * 0.20);
+
+  return {
+    score,
+    correspondencias,
+    coberturaNome
+  };
+}
+
+// ==========================================
+// EXTRAIR REFERÊNCIA INFORMADA
+// ==========================================
+
+function extrairReferencia(texto) {
+  const original = normalizarTexto(texto);
+
+  const resultado = original.match(
+    /\b(?:REF|REFERENCIA|CODIGO|COD)\s+([A-Z0-9]+(?:\s*[-/]\s*[A-Z0-9]+)*)/
+  );
+
+  if (!resultado) return null;
+
+  return resultado[1].replace(/\s+/g, "");
 }
 
 // ==========================================
@@ -162,32 +385,17 @@ function converterPreco(valor) {
 
   if (!texto) return null;
 
-  // Formato americano: 1,057.60
   if (/^-?\d{1,3}(,\d{3})+\.\d{1,2}$/.test(texto)) {
     texto = texto.replace(/,/g, "");
-  }
-
-  // Formato brasileiro: 1.057,60
-  else if (/^-?\d{1,3}(\.\d{3})+,\d{1,2}$/.test(texto)) {
+  } else if (/^-?\d{1,3}(\.\d{3})+,\d{1,2}$/.test(texto)) {
     texto = texto.replace(/\./g, "").replace(",", ".");
-  }
-
-  // Decimal com ponto
-  else if (/^-?\d+\.\d{1,2}$/.test(texto)) {
-    // Mantém o ponto.
-  }
-
-  // Decimal com vírgula
-  else if (/^-?\d+,\d{1,2}$/.test(texto)) {
+  } else if (/^-?\d+\.\d{1,2}$/.test(texto)) {
+    // Mantém decimal com ponto.
+  } else if (/^-?\d+,\d{1,2}$/.test(texto)) {
     texto = texto.replace(",", ".");
-  }
-
-  // Inteiro
-  else if (/^-?\d+$/.test(texto)) {
-    // Mantém o número.
-  }
-
-  else {
+  } else if (/^-?\d+$/.test(texto)) {
+    // Mantém inteiro.
+  } else {
     return null;
   }
 
@@ -350,76 +558,6 @@ function montarProduto(linha) {
   };
 }
 
-function chaveProduto(produto) {
-  return `${produto.referencia}|${normalizarTexto(produto.produto)}`;
-}
-
-// ==========================================
-// PONTUAÇÃO DE SIMILARIDADE
-// ==========================================
-
-function calcularSimilaridade(busca, candidato) {
-  const tokensBusca = [...new Set(obterTokens(busca))];
-
-  const tokensNome = [...new Set(obterTokens(candidato.produto))];
-
-  const tokensCatalogo = [
-    ...new Set(
-      obterTokens(
-        `${candidato.produto} ${candidato.palavrasChave}`
-      )
-    )
-  ];
-
-  if (tokensBusca.length === 0 || tokensCatalogo.length === 0) {
-    return {
-      score: 0,
-      correspondencias: 0
-    };
-  }
-
-  const conjuntoCatalogo = new Set(tokensCatalogo);
-
-  const correspondentes = tokensBusca.filter(token =>
-    conjuntoCatalogo.has(token)
-  );
-
-  const correspondencias = correspondentes.length;
-
-  const cobertura =
-    correspondencias / tokensBusca.length;
-
-  const intersecao =
-    correspondencias;
-
-  const uniao =
-    new Set([...tokensBusca, ...tokensCatalogo]).size;
-
-  const jaccard =
-    uniao > 0 ? intersecao / uniao : 0;
-
-  const conjuntoNome = new Set(tokensNome);
-
-  const correspondenciasNome =
-    tokensBusca.filter(token =>
-      conjuntoNome.has(token)
-    ).length;
-
-  const coberturaNome =
-    correspondenciasNome / tokensBusca.length;
-
-  // A identificação pelo nome principal tem peso maior.
-  const score =
-    (cobertura * 0.65) +
-    (jaccard * 0.20) +
-    (coberturaNome * 0.15);
-
-  return {
-    score,
-    correspondencias
-  };
-}
-
 // ==========================================
 // BUSCA DE PRODUTOS
 // ==========================================
@@ -433,38 +571,57 @@ function buscarProduto(linhas, produtoInformado) {
     };
   }
 
-  const dados = linhas.slice(1);
-
-  const produtos = dados
+  const produtos = linhas
+    .slice(1)
     .filter(linha => linha[0] || linha[1])
     .map(montarProduto);
 
-  // ----------------------------------------
   // 1. REFERÊNCIA EXATA
-  // ----------------------------------------
+  const referenciaInformada = extrairReferencia(produtoInformado);
 
-  const porReferencia = produtos.filter(item =>
+  if (referenciaInformada) {
+    const porReferencia = produtos.filter(item =>
+      normalizarTexto(item.referencia).replace(/\s/g, "") ===
+      referenciaInformada
+    );
+
+    if (porReferencia.length === 1) {
+      return {
+        tipo: "encontrado",
+        produto: porReferencia[0],
+        confianca: 1
+      };
+    }
+
+    if (porReferencia.length > 1) {
+      return {
+        tipo: "ambiguo",
+        candidatos: porReferencia.slice(0, 5)
+      };
+    }
+  }
+
+  // 2. REFERÊNCIA EXATA SEM TEXTO ADICIONAL
+  const porReferenciaExata = produtos.filter(item =>
     normalizarTexto(item.referencia) === busca
   );
 
-  if (porReferencia.length === 1) {
+  if (porReferenciaExata.length === 1) {
     return {
       tipo: "encontrado",
-      produto: porReferencia[0]
+      produto: porReferenciaExata[0],
+      confianca: 1
     };
   }
 
-  if (porReferencia.length > 1) {
+  if (porReferenciaExata.length > 1) {
     return {
       tipo: "ambiguo",
-      candidatos: porReferencia.slice(0, 5)
+      candidatos: porReferenciaExata.slice(0, 5)
     };
   }
 
-  // ----------------------------------------
-  // 2. NOME EXATO
-  // ----------------------------------------
-
+  // 3. NOME EXATO
   const porNome = produtos.filter(item =>
     normalizarTexto(item.produto) === busca
   );
@@ -472,7 +629,8 @@ function buscarProduto(linhas, produtoInformado) {
   if (porNome.length === 1) {
     return {
       tipo: "encontrado",
-      produto: porNome[0]
+      produto: porNome[0],
+      confianca: 1
     };
   }
 
@@ -483,10 +641,7 @@ function buscarProduto(linhas, produtoInformado) {
     };
   }
 
-  // ----------------------------------------
-  // 3. PALAVRA-CHAVE EXATA
-  // ----------------------------------------
-
+  // 4. PALAVRA-CHAVE EXATA
   const porPalavraChave = produtos.filter(item => {
     const palavras = item.palavrasChave
       .split(/[;,|]/)
@@ -499,7 +654,8 @@ function buscarProduto(linhas, produtoInformado) {
   if (porPalavraChave.length === 1) {
     return {
       tipo: "encontrado",
-      produto: porPalavraChave[0]
+      produto: porPalavraChave[0],
+      confianca: 1
     };
   }
 
@@ -510,37 +666,49 @@ function buscarProduto(linhas, produtoInformado) {
     };
   }
 
-  // ----------------------------------------
-  // 4. BUSCA POR SIMILARIDADE
-  // ----------------------------------------
-
+  // 5. SIMILARIDADE E CARACTERÍSTICAS
   const candidatos = produtos.map(item => {
+    const textoCatalogo =
+      `${item.produto} ${item.palavrasChave}`;
+
     const similaridade = calcularSimilaridade(
       produtoInformado,
       item
     );
 
-    const textoCatalogo =
-      `${item.produto} ${item.palavrasChave}`;
-
-    const medidasOK = medidasCompativeis(
+    const medidas = avaliarMedidas(
       produtoInformado,
       textoCatalogo
     );
 
+    let score = similaridade.score;
+
+    // Medidas compatíveis aumentam a confiança.
+    if (medidas.compativeis === true) {
+      score += 0.10;
+    }
+
+    // Medidas explicitamente divergentes reduzem a confiança.
+    if (medidas.compativeis === false) {
+      score -= 0.25;
+    }
+
+    score = Math.max(0, Math.min(1, score));
+
     return {
       ...item,
-      score: similaridade.score,
+      score,
       correspondencias: similaridade.correspondencias,
-      medidasOK
+      medidasCompativeis: medidas.compativeis,
+      coberturaMedidas: medidas.cobertura
     };
   });
 
   candidatos.sort((a, b) => b.score - a.score);
 
-  // Considera candidatos com correspondência relevante.
+  // Não considera candidatos sem correspondência textual.
   const relevantes = candidatos.filter(item =>
-    item.score >= 0.30 &&
+    item.score >= 0.35 &&
     item.correspondencias >= 1
   );
 
@@ -553,43 +721,36 @@ function buscarProduto(linhas, produtoInformado) {
   const melhor = relevantes[0];
   const segundo = relevantes[1];
 
-  // ----------------------------------------
-  // 5. RESULTADO COM ALTA CONFIANÇA
-  // ----------------------------------------
+  const diferenca = segundo
+    ? melhor.score - segundo.score
+    : 1;
 
-  const diferenca =
-    segundo ? melhor.score - segundo.score : 1;
+  const quantidadeTokens = obterTokens(produtoInformado).length;
 
-  const quantidadeTokens =
-    obterTokens(produtoInformado).length;
-
+  // Aprovação automática conservadora.
   const altaConfianca =
-    melhor.score >= 0.90 &&
-    melhor.medidasOK &&
+    melhor.score >= 0.92 &&
+    melhor.medidasCompativeis !== false &&
     quantidadeTokens >= 2 &&
-    diferenca >= 0.15;
+    melhor.correspondencias >= 2 &&
+    diferenca >= 0.12;
 
   if (altaConfianca) {
     return {
       tipo: "encontrado",
-      produto: melhor
+      produto: melhor,
+      confianca: Number(melhor.score.toFixed(3))
     };
   }
 
-  // ----------------------------------------
   // 6. MÚLTIPLAS POSSIBILIDADES
-  // ----------------------------------------
-
-  // Não entrega preço em correspondências aproximadas
-  // que precisam de confirmação do cliente.
-
   return {
     tipo: "ambiguo",
     candidatos: relevantes.slice(0, 5).map(item => ({
       referencia: item.referencia,
       produto: item.produto,
       score: Number(item.score.toFixed(3)),
-      medidasCompativeis: item.medidasOK
+      medidasCompativeis: item.medidasCompativeis
     }))
   };
 }
@@ -627,7 +788,7 @@ module.exports = async (req, res) => {
 
     const sheets = await conectarGoogle();
 
-    // 1. Validar CNPJ cadastrado.
+    // 1. VALIDAR CNPJ
     const cnpjValido = await validarCNPJ(sheets, cnpj);
 
     if (!cnpjValido) {
@@ -638,7 +799,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // 2. Identificar DDD pelo telefone.
+    // 2. IDENTIFICAR DDD
     const ddd = obterDDD(telefone);
 
     if (!ddd) {
@@ -649,26 +810,23 @@ module.exports = async (req, res) => {
       });
     }
 
-    // 3. Selecionar planilha regional.
+    // 3. SELECIONAR PLANILHA REGIONAL
     const planilha = obterPlanilhaPorDDD(ddd);
 
-    // 4. Ler dados.
+    // 4. LER PLANILHA
     const linhas = await lerPlanilha(
       sheets,
       planilha.id,
       planilha.gid
     );
 
-    // 5. Buscar produto.
+    // 5. BUSCAR PRODUTO
     const resultado = buscarProduto(
       linhas,
       produto
     );
 
-    // --------------------------------------
     // PRODUTO NÃO ENCONTRADO
-    // --------------------------------------
-
     if (resultado.tipo === "nao_encontrado") {
       return res.status(200).json({
         status: "not_found",
@@ -679,10 +837,7 @@ module.exports = async (req, res) => {
       });
     }
 
-    // --------------------------------------
-    // MAIS DE UMA POSSIBILIDADE
-    // --------------------------------------
-
+    // MÚLTIPLAS POSSIBILIDADES
     if (resultado.tipo === "ambiguo") {
       return res.status(200).json({
         status: "multiple_matches",
@@ -692,28 +847,23 @@ module.exports = async (req, res) => {
         candidatos: resultado.candidatos.map(item => ({
           referencia: item.referencia,
           produto: item.produto,
-          medidas_compativeis: item.medidasCompativeis
+          medidas_compativeis: item.medidasCompativeis,
+          score: item.score
         })),
         message:
-          "Encontrei possíveis produtos correspondentes, mas preciso confirmar a variação correta antes de informar o preço."
+          "Encontrei possíveis produtos correspondentes. Apresente as opções ao cliente e solicite a confirmação antes de informar o preço."
       });
     }
 
-    // --------------------------------------
     // PRODUTO ENCONTRADO
-    // --------------------------------------
-
     const produtoEncontrado = resultado.produto;
 
-    // 6. Converter preço.
     const precoFormatado = formatarPreco(
       produtoEncontrado.precoOriginal
     );
 
-    // 7. IPI fixo.
     const ipi = IPI_PADRAO;
 
-    // 8. Montar resposta.
     const message =
       `${produtoEncontrado.produto} ` +
       `(ref. ${produtoEncontrado.referencia}): ` +
