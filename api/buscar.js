@@ -1280,10 +1280,33 @@ module.exports = async (req, res) => {
     // 8. MÚLTIPLAS POSSIBILIDADES
 
     if (resultado.tipo === "ambiguo") {
-      const candidatos = formatarCandidatos(resultado.candidatos);
+      const candidatosOriginais = formatarCandidatos(resultado.candidatos);
 
-      // Monta uma lista legível para a IA apresentar ao cliente.
-      const opcoes = candidatos.map((item, indice) => ({
+      // Remove duplicados com mesmo nome e mesma referência
+      const candidatosUnicos = [];
+      const produtosExibidos = new Set();
+
+      for (const item of candidatosOriginais) {
+        const nomeNormalizado = String(item.produto || "")
+          .normalize("NFD")
+          .replace(/[\u0300-\u036f]/g, "")
+          .trim()
+          .toUpperCase()
+          .replace(/\s+/g, " ");
+
+        const referenciaNormalizada = String(item.referencia || "")
+          .trim()
+          .toUpperCase();
+
+        const chave = `${nomeNormalizado}|${referenciaNormalizada}`;
+
+        if (!produtosExibidos.has(chave)) {
+          produtosExibidos.add(chave);
+          candidatosUnicos.push(item);
+        }
+      }
+
+      const opcoes = candidatosUnicos.map((item, indice) => ({
         opcao: indice + 1,
         id_catalogo: item.id_catalogo,
         referencia: item.referencia,
@@ -1294,9 +1317,9 @@ module.exports = async (req, res) => {
       const listaOpcoes = opcoes.map((item) => item.descricao).join("\n");
 
       const message =
-        `Encontrei ${opcoes.length} possibilidades para o produto "${produto}".\n\n` +
+        `Encontrei ${opcoes.length} opções para o produto "${produto}".\n\n` +
         `${listaOpcoes}\n\n` +
-        `Apresente todas as opções ao cliente, identificando cada uma pelo número, nome e referência. ` +
+        `Apresente as opções ao cliente pelo número, nome e referência. ` +
         `Não informe preços nesta etapa. Aguarde o cliente escolher uma opção.`;
 
       return res.status(200).json({
@@ -1304,18 +1327,11 @@ module.exports = async (req, res) => {
         success: false,
         produto_solicitado: produto,
         ddd,
-
-        // Dados estruturados para a IA.
-        candidatos,
-
-        // Opções numeradas para facilitar a escolha.
+        candidatos: candidatosUnicos,
         opcoes,
-
-        // Lista textual para facilitar a leitura pelo HighLevel.
         message,
       });
     }
-
     // 9. PRODUTO ENCONTRADO
 
     const produtoEncontrado = resultado.produto;
