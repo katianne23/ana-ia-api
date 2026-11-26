@@ -821,10 +821,179 @@ module.exports = async (req, res) => {
     );
 
     // 5. BUSCAR PRODUTO
-    const resultado = buscarProduto(
-      linhas,
-      produto
+  
+function buscarProduto(linhas, produtoInformado) {
+  const busca = normalizarTexto(produtoInformado);
+
+  if (!busca) {
+    return { tipo: "nao_encontrado" };
+  }
+
+  const produtos = linhas
+    .slice(1)
+    .filter(linha => linha[0] || linha[1])
+    .map(montarProduto);
+
+  // 1. Referência explícita
+  const referenciaInformada = extrairReferencia(produtoInformado);
+
+  if (referenciaInformada) {
+    const encontrados = produtos.filter(item =>
+      normalizarTexto(item.referencia).replace(/\s/g, "") ===
+      referenciaInformada
     );
+
+    if (encontrados.length === 1) {
+      return {
+        tipo: "encontrado",
+        produto: encontrados[0],
+        confianca: 1
+      };
+    }
+
+    if (encontrados.length > 1) {
+      return {
+        tipo: "ambiguo",
+        candidatos: encontrados.slice(0, 5)
+      };
+    }
+  }
+
+  // 2. Referência isolada
+  const porReferencia = produtos.filter(item =>
+    normalizarTexto(item.referencia).replace(/\s/g, "") ===
+    busca.replace(/\s/g, "")
+  );
+
+  if (porReferencia.length === 1) {
+    return {
+      tipo: "encontrado",
+      produto: porReferencia[0],
+      confianca: 1
+    };
+  }
+
+  if (porReferencia.length > 1) {
+    return {
+      tipo: "ambiguo",
+      candidatos: porReferencia.slice(0, 5)
+    };
+  }
+
+  // 3. Busca por nome ou palavra-chave exatos
+  const exatos = produtos.filter(item =>
+    normalizarTexto(item.produto) === busca ||
+    normalizarTexto(item.palavrasChave) === busca
+  );
+
+  if (exatos.length === 1) {
+    return {
+      tipo: "encontrado",
+      produto: exatos[0],
+      confianca: 1
+    };
+  }
+
+  if (exatos.length > 1) {
+    return {
+      tipo: "ambiguo",
+      candidatos: exatos.slice(0, 5)
+    };
+  }
+
+  // 4. Similaridade e características técnicas
+  const candidatos = produtos.map(item => {
+    const textoCatalogo =
+      `${item.produto} ${item.palavrasChave}`;
+
+    const similaridade = calcularSimilaridade(
+      produtoInformado,
+      item
+    );
+
+    const caracteristicas = avaliarCaracteristicas(
+      produtoInformado,
+      textoCatalogo
+    );
+
+    let score = similaridade.score;
+
+    if (caracteristicas.compativeis === true) {
+      score += 0.08;
+    }
+
+    if (caracteristicas.compativeis === false) {
+      score -= 0.35;
+    }
+
+    score = Math.max(0, Math.min(1, score));
+
+    return {
+      ...item,
+      score,
+      correspondencias: similaridade.correspondencias,
+      medidasCompativeis: caracteristicas.compativeis,
+      dimensoesCompativeis:
+        caracteristicas.dimensoesCompativeis,
+      capacidadesCompativeis:
+        caracteristicas.capacidadesCompativeis,
+      possuiCaracteristicaNaoInformada:
+        caracteristicas.possuiCaracteristicaNaoInformada
+    };
+  });
+
+  candidatos.sort((a, b) => b.score - a.score);
+
+  const relevantes = candidatos.filter(item =>
+    item.score >= 0.30 &&
+    item.correspondencias >= 1
+  );
+
+  if (!relevantes.length) {
+    return { tipo: "nao_encontrado" };
+  }
+
+  const melhor = relevantes[0];
+  const segundo = relevantes[1];
+
+  const diferenca = segundo
+    ? melhor.score - segundo.score
+    : 1;
+
+  const quantidadeTokens = obterTokens(produtoInformado).length;
+
+  // Exige identificação textual forte e ausência de divergências.
+  const altaConfianca =
+    melhor.score >= 0.92 &&
+    melhor.medidasCompativeis !== false &&
+    melhor.dimensoesCompativeis !== false &&
+    melhor.capacidadesCompativeis !== false &&
+    !melhor.possuiCaracteristicaNaoInformada &&
+    quantidadeTokens >= 2 &&
+    melhor.correspondencias >= 2 &&
+    diferenca >= 0.12;
+
+  if (altaConfianca) {
+    return {
+      tipo: "encontrado",
+      produto: melhor,
+      confianca: Number(melhor.score.toFixed(3))
+    };
+  }
+
+  return {
+    tipo: "ambiguo",
+    candidatos: relevantes.slice(0, 5).map(item => ({
+      referencia: item.referencia,
+      produto: item.produto,
+      score: Number(item.score.toFixed(3)),
+      medidasCompativeis: item.medidasCompativeis,
+      dimensoesCompativeis: item.dimensoesCompativeis,
+      capacidadesCompativeis: item.capacidadesCompativeis
+    }))
+  };
+}
+
 
     // PRODUTO NÃO ENCONTRADO
     if (resultado.tipo === "nao_encontrado") {
