@@ -56,6 +56,43 @@ function normalizarTexto(texto) {
     .trim();
 }
 
+// ==========================================
+// NORMALIZAÇÃO DO ID DO CATÁLOGO
+// ==========================================
+
+function normalizarIdCatalogo(id) {
+  return String(id || "")
+    .trim()
+    .replace(/\s*:\s*/g, ":");
+}
+
+// ==========================================
+// OBTER PARÂMETROS DA REQUISIÇÃO
+// ==========================================
+
+function obterParametro(req, nome) {
+  const valorBruto = req.query?.[nome];
+
+  const valores = Array.isArray(valorBruto) ? valorBruto : [valorBruto];
+
+  const valoresValidos = valores
+    .flatMap((item) => {
+      const texto = String(item || "").trim();
+
+      // O ID não possui vírgulas.
+      // Se vier concatenado, separa os valores.
+      if (nome === "id_catalogo") {
+        return texto.split(",");
+      }
+
+      return [texto];
+    })
+    .map((item) => item.trim())
+    .filter((item) => item && !item.includes("{{") && !item.includes("<AI_"));
+
+  return valoresValidos[valoresValidos.length - 1] || "";
+}
+
 // Preserva números decimais para leitura técnica.
 function normalizarCaracteristicas(texto) {
   return String(texto || "")
@@ -518,7 +555,7 @@ function normalizarConsultaFrase(texto) {
   return normalizarTexto(texto)
     .replace(
       /^(QUERO COTAR|QUERO|PRECISO DE|PRECISO|GOSTARIA DE COTAR|COTAR|COTACAO DE|COTACAO|PRODUTO)\s+/,
-      ""
+      "",
     )
     .replace(/\s+/g, " ")
     .trim();
@@ -716,7 +753,9 @@ function obterPlanilhaPorDDD(ddd) {
 
 function montarProduto(linha, numeroLinha, planilha) {
   return {
-    id_catalogo: `${planilha.id}:${planilha.gid}:${numeroLinha}`,
+    id_catalogo: normalizarIdCatalogo(
+      `${planilha.id}:${planilha.gid}:${numeroLinha}`,
+    ),
     referencia: String(linha[0] || "").trim(),
     produto: String(linha[1] || "").trim(),
     precoOriginal: linha[5],
@@ -830,8 +869,10 @@ function buscarProduto(linhas, produtoInformado, planilha, idCatalogo = "") {
   // O ID identifica diretamente a linha selecionada.
 
   if (idCatalogo) {
+    const idNormalizado = normalizarIdCatalogo(idCatalogo);
+
     const selecionado = produtos.find(
-      (item) => item.id_catalogo === idCatalogo,
+      (item) => normalizarIdCatalogo(item.id_catalogo) === idNormalizado,
     );
 
     if (!selecionado) {
@@ -1042,59 +1083,54 @@ function buscarProduto(linhas, produtoInformado, planilha, idCatalogo = "") {
   }
 
   // ==========================================
-// 6. BUSCAR EXPRESSÃO COMERCIAL COMPLETA
-// ==========================================
+  // 6. BUSCAR EXPRESSÃO COMERCIAL COMPLETA
+  // ==========================================
 
-// A coluna B é a fonte principal.
-// A expressão completa precisa aparecer no nome comercial.
-// A coluna G não pode aprovar um produto sozinha.
+  // A coluna B é a fonte principal.
+  // A expressão completa precisa aparecer no nome comercial.
+  // A coluna G não pode aprovar um produto sozinha.
 
-const fraseBusca = normalizarConsultaFrase(buscaOriginal);
+  const fraseBusca = normalizarConsultaFrase(buscaOriginal);
 
-const correspondenciasExatas = produtos.filter((item) => {
-  const nomeProduto = normalizarTexto(item.produto);
+  const correspondenciasExatas = produtos.filter((item) => {
+    const nomeProduto = normalizarTexto(item.produto);
 
-  return (
-    fraseBusca.length >= 5 &&
-    nomeProduto.includes(fraseBusca)
-  );
-});
+    return fraseBusca.length >= 5 && nomeProduto.includes(fraseBusca);
+  });
 
-if (correspondenciasExatas.length > 0) {
-  // Remove registros repetidos com mesmo nome e referência.
-  const unicos = [];
-  const vistos = new Set();
+  if (correspondenciasExatas.length > 0) {
+    // Remove registros repetidos com mesmo nome e referência.
+    const unicos = [];
+    const vistos = new Set();
 
-  for (const item of correspondenciasExatas) {
-    const chave =
-      `${normalizarTexto(item.produto)}|` +
-      `${normalizarTexto(item.referencia)}`;
+    for (const item of correspondenciasExatas) {
+      const chave =
+        `${normalizarTexto(item.produto)}|` +
+        `${normalizarTexto(item.referencia)}`;
 
-    if (!vistos.has(chave)) {
-      vistos.add(chave);
-      unicos.push(item);
+      if (!vistos.has(chave)) {
+        vistos.add(chave);
+        unicos.push(item);
+      }
     }
-  }
 
-  // Uma única correspondência comercial:
-  // retorna diretamente o produto e libera a consulta do preço.
-  if (unicos.length === 1) {
+    // Uma única correspondência comercial:
+    // retorna diretamente o produto e libera a consulta do preço.
+    if (unicos.length === 1) {
+      return {
+        tipo: "encontrado",
+        produto: unicos[0],
+        confianca: 1,
+      };
+    }
+
+    // Mais de uma correspondência:
+    // solicita confirmação do cliente.
     return {
-      tipo: "encontrado",
-      produto: unicos[0],
-      confianca: 1,
+      tipo: "ambiguo",
+      candidatos: unicos.map((item) => avaliarCandidato(buscaOriginal, item)),
     };
   }
-
-  // Mais de uma correspondência:
-  // solicita confirmação do cliente.
-  return {
-    tipo: "ambiguo",
-    candidatos: unicos.map((item) =>
-      avaliarCandidato(buscaOriginal, item)
-    ),
-  };
-}
 
   // ==========================================
   // 6. BUSCAR NOME EXATO
@@ -1158,78 +1194,70 @@ if (correspondenciasExatas.length > 0) {
   // - Nome do produto na coluna B
   // - Palavras-chave na coluna G
 
- const candidatos = produtos.map((item) =>
-  avaliarCandidato(buscaOriginal, item),
-);
+  const candidatos = produtos.map((item) =>
+    avaliarCandidato(buscaOriginal, item),
+  );
 
-// Ordena os candidatos do maior para o menor score
-candidatos.sort((a, b) => b.score - a.score);
+  // Ordena os candidatos do maior para o menor score
+  candidatos.sort((a, b) => b.score - a.score);
 
-// Define a quantidade mínima de correspondências
-const tokensPesquisa = obterTokens(buscaOriginal);
+  // Define a quantidade mínima de correspondências
+  const tokensPesquisa = obterTokens(buscaOriginal);
 
-const minimoCorrespondencias =
-  tokensPesquisa.length >= 2 ? 2 : 1;
+  const minimoCorrespondencias = tokensPesquisa.length >= 2 ? 2 : 1;
 
-// Filtra apenas os candidatos relevantes
-const relevantes = candidatos.filter(
-  (item) =>
-    item.score >= 0.45 &&
-    item.correspondencias >= minimoCorrespondencias,
-);
+  // Filtra apenas os candidatos relevantes
+  const relevantes = candidatos.filter(
+    (item) =>
+      item.score >= 0.45 && item.correspondencias >= minimoCorrespondencias,
+  );
 
-// Se nenhum produto atender aos critérios
-if (relevantes.length === 0) {
-  return {
-    tipo: "nao_encontrado",
-  };
-}
+  // Se nenhum produto atender aos critérios
+  if (relevantes.length === 0) {
+    return {
+      tipo: "nao_encontrado",
+    };
+  }
 
-// Identifica o melhor candidato e o segundo colocado
-const melhor = relevantes[0];
-const segundo = relevantes[1];
+  // Identifica o melhor candidato e o segundo colocado
+  const melhor = relevantes[0];
+  const segundo = relevantes[1];
 
-// Calcula a diferença entre os dois melhores resultados
-const diferenca = segundo
-  ? melhor.score - segundo.score
-  : 1;
+  // Calcula a diferença entre os dois melhores resultados
+  const diferenca = segundo ? melhor.score - segundo.score : 1;
 
-// Extrai as características informadas na pesquisa
-const caracteristicas = extrairCaracteristicas(buscaOriginal);
+  // Extrai as características informadas na pesquisa
+  const caracteristicas = extrairCaracteristicas(buscaOriginal);
 
-const temMedida =
-  caracteristicas.medidasSimples.length > 0;
+  const temMedida = caracteristicas.medidasSimples.length > 0;
 
-const temDimensao =
-  caracteristicas.dimensoes.length > 0;
+  const temDimensao = caracteristicas.dimensoes.length > 0;
 
-const temCapacidade =
-  caracteristicas.capacidades.length > 0;
+  const temCapacidade = caracteristicas.capacidades.length > 0;
 
-// Verifica a compatibilidade das medidas
-const medidasConfirmadas =
-  !temMedida || melhor.medidasCompativeis === true;
+  // Verifica a compatibilidade das medidas
+  const medidasConfirmadas = !temMedida || melhor.medidasCompativeis === true;
 
-// Verifica a compatibilidade das dimensões
-const dimensoesConfirmadas =
-  !temDimensao || melhor.dimensoesCompativeis === true;
+  // Verifica a compatibilidade das dimensões
+  const dimensoesConfirmadas =
+    !temDimensao || melhor.dimensoesCompativeis === true;
 
-// Verifica a compatibilidade das capacidades
-const capacidadesConfirmadas =
-  !temCapacidade || melhor.capacidadesCompativeis === true;
+  // Verifica a compatibilidade das capacidades
+  const capacidadesConfirmadas =
+    !temCapacidade || melhor.capacidadesCompativeis === true;
 
-// Verifica os atributos do produto
-const atributosConfirmados =
-  !melhor.atributosNaoConfirmados.length &&
-  !melhor.atributosDivergentes.length;
+  // Verifica os atributos do produto
+  const atributosConfirmados =
+    !melhor.atributosNaoConfirmados.length &&
+    !melhor.atributosDivergentes.length;
 
-// Confirma se todas as características são compatíveis
-const caracteristicasConfirmadas =
-  medidasConfirmadas &&
-  dimensoesConfirmadas &&
-  capacidadesConfirmadas &&
-  atributosConfirmados &&
-  !melhor.possuiDivergencia;
+  // Confirma se todas as características são compatíveis
+  const caracteristicasConfirmadas =
+    medidasConfirmadas &&
+    dimensoesConfirmadas &&
+    capacidadesConfirmadas &&
+    atributosConfirmados &&
+    !melhor.possuiDivergencia;
 
   // ==========================================
   // 8. SELEÇÃO AUTOMÁTICA COM ALTA CONFIANÇA
@@ -1295,10 +1323,13 @@ module.exports = async (req, res) => {
   }
 
   try {
-    const produto = String(req.query.produto || "").trim();
-    const idCatalogo = String(req.query.id_catalogo || "").trim();
-    const telefone = String(req.query.telefone || "").trim();
-    const cnpj = String(req.query.cnpj || "").trim();
+    const produto = obterParametro(req, "produto");
+
+    const idCatalogo = normalizarIdCatalogo(obterParametro(req, "id_catalogo"));
+
+    const telefone = obterParametro(req, "telefone");
+
+    const cnpj = obterParametro(req, "cnpj");
 
     if ((!produto && !idCatalogo) || !telefone || !cnpj) {
       return res.status(400).json({
