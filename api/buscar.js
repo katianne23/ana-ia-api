@@ -511,6 +511,20 @@ function extrairReferencia(texto) {
 }
 
 // ==========================================
+// NORMALIZAR EXPRESSÃO DE PESQUISA
+// ==========================================
+
+function normalizarConsultaFrase(texto) {
+  return normalizarTexto(texto)
+    .replace(
+      /^(QUERO COTAR|QUERO|PRECISO DE|PRECISO|GOSTARIA DE COTAR|COTAR|COTACAO DE|COTACAO|PRODUTO)\s+/,
+      ""
+    )
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+// ==========================================
 // PREÇOS
 // ==========================================
 
@@ -1028,6 +1042,61 @@ function buscarProduto(linhas, produtoInformado, planilha, idCatalogo = "") {
   }
 
   // ==========================================
+// 6. BUSCAR EXPRESSÃO COMERCIAL COMPLETA
+// ==========================================
+
+// A coluna B é a fonte principal.
+// A expressão completa precisa aparecer no nome comercial.
+// A coluna G não pode aprovar um produto sozinha.
+
+const fraseBusca = normalizarConsultaFrase(buscaOriginal);
+
+const correspondenciasExatas = produtos.filter((item) => {
+  const nomeProduto = normalizarTexto(item.produto);
+
+  return (
+    fraseBusca.length >= 5 &&
+    nomeProduto.includes(fraseBusca)
+  );
+});
+
+if (correspondenciasExatas.length > 0) {
+  // Remove registros repetidos com mesmo nome e referência.
+  const unicos = [];
+  const vistos = new Set();
+
+  for (const item of correspondenciasExatas) {
+    const chave =
+      `${normalizarTexto(item.produto)}|` +
+      `${normalizarTexto(item.referencia)}`;
+
+    if (!vistos.has(chave)) {
+      vistos.add(chave);
+      unicos.push(item);
+    }
+  }
+
+  // Uma única correspondência comercial:
+  // retorna diretamente o produto e libera a consulta do preço.
+  if (unicos.length === 1) {
+    return {
+      tipo: "encontrado",
+      produto: unicos[0],
+      confianca: 1,
+    };
+  }
+
+  // Mais de uma correspondência:
+  // solicita confirmação do cliente.
+  return {
+    tipo: "ambiguo",
+    candidatos: unicos.map((item) =>
+      avaliarCandidato(buscaOriginal, item)
+    ),
+  };
+}
+
+  // ==========================================
   // 6. BUSCAR NOME EXATO
   // ==========================================
 
@@ -1089,53 +1158,78 @@ function buscarProduto(linhas, produtoInformado, planilha, idCatalogo = "") {
   // - Nome do produto na coluna B
   // - Palavras-chave na coluna G
 
-  const candidatos = produtos.map((item) =>
-    avaliarCandidato(buscaOriginal, item),
-  );
+ const candidatos = produtos.map((item) =>
+  avaliarCandidato(buscaOriginal, item),
+);
 
-  candidatos.sort((a, b) => b.score - a.score);
+// Ordena os candidatos do maior para o menor score
+candidatos.sort((a, b) => b.score - a.score);
 
-  const relevantes = candidatos.filter(
-    (item) => item.score >= 0.3 && item.correspondencias >= 1,
-  );
+// Define a quantidade mínima de correspondências
+const tokensPesquisa = obterTokens(buscaOriginal);
 
-  if (!relevantes.length) {
-    return {
-      tipo: "nao_encontrado",
-    };
-  }
+const minimoCorrespondencias =
+  tokensPesquisa.length >= 2 ? 2 : 1;
 
-  const melhor = relevantes[0];
-  const segundo = relevantes[1];
+// Filtra apenas os candidatos relevantes
+const relevantes = candidatos.filter(
+  (item) =>
+    item.score >= 0.45 &&
+    item.correspondencias >= minimoCorrespondencias,
+);
 
-  const diferenca = segundo ? melhor.score - segundo.score : 1;
+// Se nenhum produto atender aos critérios
+if (relevantes.length === 0) {
+  return {
+    tipo: "nao_encontrado",
+  };
+}
 
-  const caracteristicas = extrairCaracteristicas(buscaOriginal);
+// Identifica o melhor candidato e o segundo colocado
+const melhor = relevantes[0];
+const segundo = relevantes[1];
 
-  const temMedida = caracteristicas.medidasSimples.length > 0;
+// Calcula a diferença entre os dois melhores resultados
+const diferenca = segundo
+  ? melhor.score - segundo.score
+  : 1;
 
-  const temDimensao = caracteristicas.dimensoes.length > 0;
+// Extrai as características informadas na pesquisa
+const caracteristicas = extrairCaracteristicas(buscaOriginal);
 
-  const temCapacidade = caracteristicas.capacidades.length > 0;
+const temMedida =
+  caracteristicas.medidasSimples.length > 0;
 
-  const medidasConfirmadas = !temMedida || melhor.medidasCompativeis === true;
+const temDimensao =
+  caracteristicas.dimensoes.length > 0;
 
-  const dimensoesConfirmadas =
-    !temDimensao || melhor.dimensoesCompativeis === true;
+const temCapacidade =
+  caracteristicas.capacidades.length > 0;
 
-  const capacidadesConfirmadas =
-    !temCapacidade || melhor.capacidadesCompativeis === true;
+// Verifica a compatibilidade das medidas
+const medidasConfirmadas =
+  !temMedida || melhor.medidasCompativeis === true;
 
-  const atributosConfirmados =
-    !melhor.atributosNaoConfirmados.length &&
-    !melhor.atributosDivergentes.length;
+// Verifica a compatibilidade das dimensões
+const dimensoesConfirmadas =
+  !temDimensao || melhor.dimensoesCompativeis === true;
 
-  const caracteristicasConfirmadas =
-    medidasConfirmadas &&
-    dimensoesConfirmadas &&
-    capacidadesConfirmadas &&
-    atributosConfirmados &&
-    !melhor.possuiDivergencia;
+// Verifica a compatibilidade das capacidades
+const capacidadesConfirmadas =
+  !temCapacidade || melhor.capacidadesCompativeis === true;
+
+// Verifica os atributos do produto
+const atributosConfirmados =
+  !melhor.atributosNaoConfirmados.length &&
+  !melhor.atributosDivergentes.length;
+
+// Confirma se todas as características são compatíveis
+const caracteristicasConfirmadas =
+  medidasConfirmadas &&
+  dimensoesConfirmadas &&
+  capacidadesConfirmadas &&
+  atributosConfirmados &&
+  !melhor.possuiDivergencia;
 
   // ==========================================
   // 8. SELEÇÃO AUTOMÁTICA COM ALTA CONFIANÇA
