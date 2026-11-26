@@ -1,32 +1,50 @@
 
-const { google } = require("googleapis");
+const { google } = require('googleapis');
 
 // ==========================================
 // CONFIGURAÇÃO DAS PLANILHAS
 // ==========================================
 
 // São Paulo
-const PLANILHA_SP_ID =
-  "1p_fGcdYYxBZaud8sBS78WuagB057OB1Xv34Lkc94V7E";
+const PLANILHA_SP_ID = "1p_fGcdYYxBZaud8sBS78WuagB057OB1Xv34Lkc94V7E";
 const ABA_SP_GID = 116363705;
 
-// Rio de Janeiro e grupo de estados
-const PLANILHA_RJ_ID =
-  "1xCxEIRZN1kP-BEUhSJAByArvjEYMk1R4NTAdxuNElmc";
+// RJ e grupo de estados
+const PLANILHA_RJ_ID = "1xCxEIRZN1kP-BEUhSJAByArvjEYMk1R4NTAdxuNElmc";
 const ABA_RJ_GID = 2116486440;
 
 // Demais regiões
-const PLANILHA_DEMAIS_ID =
-  "1-8h0tJTFIymP6NPCfAIGDs40YkJ_DSHoCe6xJE03xXA";
+const PLANILHA_DEMAIS_ID = "1-8h0tJTFIymP6NPCfAIGDs40YkJ_DSHoCe6xJE03xXA";
 const ABA_DEMAIS_GID = 506062902;
 
-// Contatos — ID atualizado
-const PLANILHA_CONTATOS_ID =
-  "1Mp_G0e8ZlN-ofQZX0w-wZSUuQgTtuzCHlk7i6HfsiJ4";
+// Contatos
+const PLANILHA_CONTATOS_ID = "1Mp_G0e8ZlN-ofQZX0w-wZSUuQgTtuzCHlk7i6HfsiJ4";
 const ABA_CONTATOS_GID = 1846076689;
 
 // ==========================================
-// FUNÇÕES AUXILIARES
+// CONFIGURAÇÃO GOOGLE
+// ==========================================
+
+async function conectarGoogle() {
+  const credentials = JSON.parse(
+    process.env.GOOGLE_SERVICE_ACCOUNT_KEY
+  );
+
+  const auth = new google.auth.GoogleAuth({
+    credentials,
+    scopes: [
+      "https://www.googleapis.com/auth/spreadsheets.readonly"
+    ]
+  });
+
+  return google.sheets({
+    version: "v4",
+    auth
+  });
+}
+
+// ==========================================
+// NORMALIZAÇÃO DE TEXTO
 // ==========================================
 
 function normalizarTexto(texto) {
@@ -34,102 +52,157 @@ function normalizarTexto(texto) {
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
     .toUpperCase()
-    .replace(/[^A-Z0-9\s]/g, " ")
+    .replace(/[^\w\s]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
 }
 
-function somenteNumeros(valor) {
-  return String(valor || "").replace(/\D/g, "");
+// ==========================================
+// FORMATAÇÃO CORRETA DE PREÇO
+// ==========================================
+
+function converterPreco(valor) {
+  if (valor === null || valor === undefined || valor === "") {
+    return null;
+  }
+
+  // Se o Google retornar um número, ele já representa
+  // o valor numérico real da célula.
+  if (typeof valor === "number") {
+    if (!Number.isFinite(valor)) return null;
+    return valor;
+  }
+
+  let texto = String(valor)
+    .trim()
+    .replace(/^R\$\s*/i, "")
+    .replace(/\s/g, "");
+
+  if (!texto) return null;
+
+  // Padrão americano: 1,057.60
+  // Remove vírgula de milhar e mantém ponto decimal.
+  if (/^-?\d{1,3}(,\d{3})+\.\d{1,2}$/.test(texto)) {
+    texto = texto.replace(/,/g, "");
+  }
+  // Padrão brasileiro: 1.057,60
+  else if (/^-?\d{1,3}(\.\d{3})+,\d{1,2}$/.test(texto)) {
+    texto = texto.replace(/\./g, "").replace(",", ".");
+  }
+  // Decimal com ponto: 236.91
+  else if (/^-?\d+\.\d{1,2}$/.test(texto)) {
+    // Mantém o ponto como separador decimal.
+  }
+  // Decimal com vírgula: 236,91
+  else if (/^-?\d+,\d{1,2}$/.test(texto)) {
+    texto = texto.replace(",", ".");
+  }
+  // Inteiro sem separador
+  else if (/^-?\d+$/.test(texto)) {
+    // Mantém o número inteiro.
+  } else {
+    return null;
+  }
+
+  const numero = Number(texto);
+
+  return Number.isFinite(numero) ? numero : null;
 }
 
-function jsonResponse(res, statusCode, data) {
-  return res.status(statusCode).json(data);
+function formatarPreco(valor) {
+  const numero = converterPreco(valor);
+
+  if (numero === null) {
+    throw new Error("Preço inválido na planilha");
+  }
+
+  return numero.toLocaleString("pt-BR", {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  });
 }
 
-// Localiza o nome da aba pelo GID
-async function getSheetName(sheets, spreadsheetId, gid) {
+// ==========================================
+// IDENTIFICAR ABA PELO GID
+// ==========================================
+
+async function obterNomeAba(sheets, spreadsheetId, gid) {
   const resposta = await sheets.spreadsheets.get({
     spreadsheetId,
+    fields: "sheets.properties"
   });
 
-  const abas = resposta.data.sheets || [];
-
-  const aba = abas.find(
-    (item) => Number(item.properties.sheetId) === Number(gid)
+  const aba = resposta.data.sheets.find(
+    item => Number(item.properties.sheetId) === Number(gid)
   );
 
   if (!aba) {
-    throw new Error(
-      `A aba com GID ${gid} não foi encontrada na planilha ${spreadsheetId}.`
-    );
+    throw new Error(`Aba com GID ${gid} não encontrada.`);
   }
 
   return aba.properties.title;
 }
 
-// Lê os dados de uma aba
+// ==========================================
+// LER DADOS DA PLANILHA
+// ==========================================
+
 async function lerPlanilha(sheets, spreadsheetId, gid) {
-  const nomeAba = await getSheetName(
+  const nomeAba = await obterNomeAba(
     sheets,
     spreadsheetId,
     gid
   );
 
-  const nomeAbaEscapado = nomeAba.replace(/'/g, "''");
+  const intervalo = `'${nomeAba.replace(/'/g, "''")}'!A:Z`;
 
   const resposta = await sheets.spreadsheets.values.get({
     spreadsheetId,
-    range: `'${nomeAbaEscapado}'!A:Z`,
+    range: intervalo,
+    valueRenderOption: "UNFORMATTED_VALUE"
   });
 
   return resposta.data.values || [];
 }
 
 // ==========================================
-// VALIDAÇÃO DO CNPJ
+// VALIDAR CNPJ
 // ==========================================
 
+function limparCNPJ(cnpj) {
+  return String(cnpj || "").replace(/\D/g, "");
+}
+
 async function validarCNPJ(sheets, cnpj) {
-  const cnpjLimpo = somenteNumeros(cnpj);
+  const cnpjLimpo = limparCNPJ(cnpj);
 
   if (cnpjLimpo.length !== 14) {
     return false;
   }
 
-  const contatos = await lerPlanilha(
+  const linhas = await lerPlanilha(
     sheets,
     PLANILHA_CONTATOS_ID,
     ABA_CONTATOS_GID
   );
 
-  // Procura o CNPJ nas células da planilha de contatos.
-  // A primeira linha é considerada cabeçalho.
-  for (let i = 1; i < contatos.length; i++) {
-    const linha = contatos[i] || [];
+  return linhas.some((linha, indice) => {
+    if (indice === 0) return false;
 
-    for (const celula of linha) {
-      if (somenteNumeros(celula) === cnpjLimpo) {
-        return true;
-      }
-    }
-  }
-
-  return false;
+    return linha.some(celula =>
+      limparCNPJ(celula) === cnpjLimpo
+    );
+  });
 }
 
 // ==========================================
-// IDENTIFICAÇÃO DO DDD
+// IDENTIFICAR REGIÃO PELO DDD
 // ==========================================
 
 function obterDDD(telefone) {
-  let numero = somenteNumeros(telefone);
+  let numero = String(telefone || "").replace(/\D/g, "");
 
-  // Remove o código do Brasil, quando presente
-  if (
-    numero.startsWith("55") &&
-    (numero.length === 12 || numero.length === 13)
-  ) {
+  if (numero.startsWith("55") && numero.length >= 12) {
     numero = numero.substring(2);
   }
 
@@ -140,289 +213,192 @@ function obterDDD(telefone) {
   return numero.substring(0, 2);
 }
 
-// ==========================================
-// SELEÇÃO DA PLANILHA POR REGIÃO
-// ==========================================
-
-function selecionarPlanilha(ddd) {
-  const numeroDDD = Number(ddd);
-
-  // São Paulo: DDD 11 a 19
-  if (numeroDDD >= 11 && numeroDDD <= 19) {
-    return {
-      id: PLANILHA_SP_ID,
-      gid: ABA_SP_GID,
-    };
-  }
-
-  // Grupo RJ, PR, MG, RS e SC
-  const dddsGrupoRJ = [
-    21, 22, 24,
-    31, 32, 33, 34, 35, 37, 38,
-    41, 42, 43, 44, 45, 46, 47, 48, 49,
-    51, 53, 54, 55,
+function obterPlanilhaPorDDD(ddd) {
+  const dddsSP = [
+    "11", "12", "13", "14", "15",
+    "16", "17", "18", "19"
   ];
 
-  if (dddsGrupoRJ.includes(numeroDDD)) {
+  const dddsRJ = [
+    "21", "22", "24",
+    "31", "32", "33", "34", "35", "37", "38",
+    "41", "42", "43", "44", "45", "46",
+    "47", "48", "49",
+    "51", "53", "54", "55"
+  ];
+
+  if (dddsSP.includes(ddd)) {
     return {
-      id: PLANILHA_RJ_ID,
-      gid: ABA_RJ_GID,
+      id: PLANILHA_SP_ID,
+      gid: ABA_SP_GID
     };
   }
 
-  // Demais regiões
+  if (dddsRJ.includes(ddd)) {
+    return {
+      id: PLANILHA_RJ_ID,
+      gid: ABA_RJ_GID
+    };
+  }
+
   return {
     id: PLANILHA_DEMAIS_ID,
-    gid: ABA_DEMAIS_GID,
+    gid: ABA_DEMAIS_GID
   };
-}
-
-// ==========================================
-// FORMATAÇÃO DO PREÇO
-// ==========================================
-
-function formatarPreco(valor) {
-  if (valor === null || valor === undefined) {
-    return "";
-  }
-
-  const texto = String(valor).trim();
-
-  if (!texto) {
-    return "";
-  }
-
-  // Se já estiver formatado como moeda, preserva o conteúdo
-  if (/R\$\s*/i.test(texto)) {
-    return texto.replace(/\s+/g, " ");
-  }
-
-  // Formata valores numéricos
-  const numero = Number(
-    texto.replace(/\./g, "").replace(",", ".")
-  );
-
-  if (Number.isFinite(numero)) {
-    return numero.toLocaleString("pt-BR", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    });
-  }
-
-  return texto;
 }
 
 // ==========================================
 // BUSCA DO PRODUTO
 // ==========================================
 
-function buscarProduto(linhas, termoBusca) {
-  const buscaNormalizada = normalizarTexto(termoBusca);
-  const buscaReferencia = String(termoBusca).trim().toUpperCase();
+function buscarProduto(linhas, produtoInformado) {
+  const busca = normalizarTexto(produtoInformado);
 
-  const produtos = linhas.slice(1).map((linha) => {
-    return {
-      ref: String(linha[0] || "").trim(),
-      nome: String(linha[1] || "").trim(),
-      preco: linha[5],
-      palavrasChave: String(linha[6] || "").trim(),
-    };
-  }).filter((produto) => {
-    return produto.ref && produto.nome && produto.preco !== undefined;
-  });
+  if (!busca) return null;
+
+  // Ignora cabeçalho.
+  const dados = linhas.slice(1);
+
+  // A = Referência
+  // B = Nome
+  // F = Preço
+  // G = Palavras-chave
 
   // 1. Busca por referência exata
-  let encontrado = produtos.find((produto) => {
-    return produto.ref.toUpperCase() === buscaReferencia;
-  });
-
-  if (encontrado) {
-    return encontrado;
-  }
+  let encontrado = dados.find(linha =>
+    normalizarTexto(linha[0]) === busca
+  );
 
   // 2. Busca por nome exato
-  encontrado = produtos.find((produto) => {
-    return normalizarTexto(produto.nome) === buscaNormalizada;
-  });
-
-  if (encontrado) {
-    return encontrado;
+  if (!encontrado) {
+    encontrado = dados.find(linha =>
+      normalizarTexto(linha[1]) === busca
+    );
   }
 
   // 3. Busca por palavra-chave exata
-  encontrado = produtos.find((produto) => {
-    const palavras = produto.palavrasChave
-      .split(/[;,|]/)
-      .map((palavra) => normalizarTexto(palavra))
-      .filter(Boolean);
+  if (!encontrado) {
+    encontrado = dados.find(linha => {
+      const palavras = String(linha[6] || "")
+        .split(/[;,|]/)
+        .map(item => normalizarTexto(item));
 
-    return palavras.includes(buscaNormalizada);
-  });
+      return palavras.includes(busca);
+    });
+  }
 
-  return encontrado || null;
+  if (!encontrado) return null;
+
+  return {
+    referencia: encontrado[0] || "",
+    produto: encontrado[1] || "",
+    precoOriginal: encontrado[5],
+    ipi: encontrado[7] || encontrado[8] || "5,2%"
+  };
 }
 
 // ==========================================
-// ENDPOINT PRINCIPAL — GET
+// RESPOSTA DA API
 // ==========================================
 
-export default async function handler(req, res) {
-  // Aceita somente GET
+module.exports = async (req, res) => {
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
+
   if (req.method !== "GET") {
-    return jsonResponse(res, 405, {
+    return res.status(405).json({
       status: "error",
-      message: "Método não permitido. Utilize GET.",
-    });
-  }
-
-  // Recebe os parâmetros pela URL
-  const produto = Array.isArray(req.query.produto)
-    ? req.query.produto[0]
-    : req.query.produto;
-
-  const telefone = Array.isArray(req.query.telefone)
-    ? req.query.telefone[0]
-    : req.query.telefone;
-
-  const cnpj = Array.isArray(req.query.cnpj)
-    ? req.query.cnpj[0]
-    : req.query.cnpj;
-
-  const termoBusca = String(produto || "").trim();
-  const telefoneLimpo = somenteNumeros(telefone);
-  const cnpjLimpo = somenteNumeros(cnpj);
-
-  // Verifica se o produto foi informado
-  if (!termoBusca) {
-    return jsonResponse(res, 400, {
-      status: "error",
-      message: "Nenhum produto informado.",
-    });
-  }
-
-  // Verifica telefone
-  if (!telefoneLimpo) {
-    return jsonResponse(res, 400, {
-      status: "error",
-      message: "Telefone não informado.",
-    });
-  }
-
-  // Verifica CNPJ
-  if (cnpjLimpo.length !== 14) {
-    return jsonResponse(res, 400, {
-      status: "cnpj_invalido",
-      message: "CNPJ inválido ou não informado.",
+      success: false,
+      message: "Método não permitido. Utilize GET."
     });
   }
 
   try {
-    // Autenticação Google
-    if (!process.env.GOOGLE_SERVICE_ACCOUNT_KEY) {
-      throw new Error(
-        "Variável GOOGLE_SERVICE_ACCOUNT_KEY não configurada na Vercel."
-      );
+    const produto = String(req.query.produto || "").trim();
+    const telefone = String(req.query.telefone || "").trim();
+    const cnpj = String(req.query.cnpj || "").trim();
+
+    if (!produto || !telefone || !cnpj) {
+      return res.status(400).json({
+        status: "error",
+        success: false,
+        message: "Informe produto, telefone e CNPJ."
+      });
     }
 
-    const auth = new google.auth.GoogleAuth({
-      credentials: JSON.parse(
-        process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-      ),
-      scopes: [
-        "https://www.googleapis.com/auth/spreadsheets.readonly",
-      ],
-    });
+    const sheets = await conectarGoogle();
 
-    const sheets = google.sheets({
-      version: "v4",
-      auth,
-    });
-
-    // 1. Valida CNPJ na planilha de contatos
-    const cnpjValido = await validarCNPJ(
-      sheets,
-      cnpjLimpo
-    );
+    // 1. Validar CNPJ
+    const cnpjValido = await validarCNPJ(sheets, cnpj);
 
     if (!cnpjValido) {
-      return jsonResponse(res, 200, {
+      return res.status(200).json({
         status: "cnpj_invalido",
         success: false,
-        message: "CNPJ não localizado na base de clientes.",
+        message: "CNPJ não encontrado no cadastro de clientes."
       });
     }
 
-    // 2. Identifica o DDD
-    const ddd = obterDDD(telefoneLimpo);
+    // 2. Identificar DDD
+    const ddd = obterDDD(telefone);
 
     if (!ddd) {
-      return jsonResponse(res, 400, {
+      return res.status(200).json({
         status: "error",
-        message: "Não foi possível identificar o DDD do telefone.",
+        success: false,
+        message: "Telefone inválido ou sem DDD."
       });
     }
 
-    // 3. Seleciona a planilha regional
-    const planilha = selecionarPlanilha(ddd);
+    // 3. Selecionar planilha regional
+    const planilha = obterPlanilhaPorDDD(ddd);
 
-    // 4. Lê os produtos da planilha
+    // 4. Consultar produtos
     const linhas = await lerPlanilha(
       sheets,
       planilha.id,
       planilha.gid
     );
 
-    // 5. Busca o produto
-    const produtoEncontrado = buscarProduto(
-      linhas,
-      termoBusca
-    );
+    const resultado = buscarProduto(linhas, produto);
 
-    if (!produtoEncontrado) {
-      return jsonResponse(res, 200, {
+    if (!resultado) {
+      return res.status(200).json({
         status: "not_found",
         success: false,
-        message: `Não localizei o produto: ${termoBusca}.`,
+        produto: produto,
+        ddd: ddd,
+        message: `Não localizei o produto: ${produto}.`
       });
     }
 
-    // 6. Valida preço
-    const preco = formatarPreco(
-      produtoEncontrado.preco
+    // 5. Converter e formatar preço
+    const precoFormatado = formatarPreco(
+      resultado.precoOriginal
     );
 
-    if (!preco) {
-      return jsonResponse(res, 200, {
-        status: "error",
-        success: false,
-        message: "O produto foi localizado, mas não possui preço válido cadastrado.",
-      });
-    }
+    // 6. Montar resposta
+    const message =
+      `${resultado.produto} (ref. ${resultado.referencia}): ` +
+      `R$ ${precoFormatado} + ${resultado.ipi} de IPI.`;
 
-    // 7. Retorna resultado
-    const mensagem =
-      `${produtoEncontrado.nome} (ref. ${produtoEncontrado.ref}): ` +
-      `R$ ${preco} + 5,2% de IPI.`;
-
-    return jsonResponse(res, 200, {
+    return res.status(200).json({
       status: "success",
       success: true,
-      produto: produtoEncontrado.nome,
-      referencia: produtoEncontrado.ref,
-      preco: preco,
-      ipi: "5,2%",
+      produto: resultado.produto,
+      referencia: String(resultado.referencia),
+      preco: precoFormatado,
+      ipi: resultado.ipi,
       ddd: ddd,
-      message: mensagem,
+      message: message
     });
 
-  } catch (error) {
-    console.error("Erro na API de busca:", error);
+  } catch (erro) {
+    console.error("ERRO NA API BUSCAR:", erro.message);
 
-    return jsonResponse(res, 500, {
+    return res.status(500).json({
       status: "error",
       success: false,
-      message: "Erro interno ao consultar a base de preços.",
-      detalhe: error.message,
+      message: "Ocorreu um erro ao consultar o produto. Encaminhe para atendimento humano."
     });
   }
-}
+};
