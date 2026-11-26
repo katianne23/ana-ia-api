@@ -27,20 +27,16 @@ async function conectarGoogle() {
     throw new Error("Credencial Google não configurada.");
   }
 
-  const credentials = JSON.parse(
-    process.env.GOOGLE_SERVICE_ACCOUNT_KEY
-  );
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT_KEY);
 
   const auth = new google.auth.GoogleAuth({
     credentials,
-    scopes: [
-      "https://www.googleapis.com/auth/spreadsheets.readonly"
-    ]
+    scopes: ["https://www.googleapis.com/auth/spreadsheets.readonly"],
   });
 
   return google.sheets({
     version: "v4",
-    auth
+    auth,
   });
 }
 
@@ -92,24 +88,60 @@ const SINONIMOS = {
 
   YANKAUR: "YANKAUER",
 
-  STEINMAN: "STEIMAN"
+  STEINMAN: "STEIMAN",
 };
 
 const PALAVRAS_IGNORADAS = new Set([
-  "QUERO", "COTAR", "COTACAO", "PRECISO",
-  "DE", "DO", "DA", "DOS", "DAS",
-  "O", "A", "OS", "AS", "UM", "UMA",
-  "COM", "PARA", "POR", "EM", "NO", "NA",
-  "NOS", "NAS", "E", "OU", "ME", "ENVIE",
-  "INFORME", "PRODUTO", "ITEM", "ITENS",
-  "REFERENCIA", "REF", "CODIGO",
-  "UN", "UND", "UNIDADE", "UNIDADES",
-  "QUANTIDADE", "QTD",
-  "MATERIAL", "CONFECCIONADO",
-  "CONFECCIONADA", "FABRICADO",
-  "FABRICADA", "CAPACIDADE",
-  "FORMATO", "TIPO",
-  "APROXIMADAMENTE", "APROX"
+  "QUERO",
+  "COTAR",
+  "COTACAO",
+  "PRECISO",
+  "DE",
+  "DO",
+  "DA",
+  "DOS",
+  "DAS",
+  "O",
+  "A",
+  "OS",
+  "AS",
+  "UM",
+  "UMA",
+  "COM",
+  "PARA",
+  "POR",
+  "EM",
+  "NO",
+  "NA",
+  "NOS",
+  "NAS",
+  "E",
+  "OU",
+  "ME",
+  "ENVIE",
+  "INFORME",
+  "PRODUTO",
+  "ITEM",
+  "ITENS",
+  "REFERENCIA",
+  "REF",
+  "CODIGO",
+  "UN",
+  "UND",
+  "UNIDADE",
+  "UNIDADES",
+  "QUANTIDADE",
+  "QTD",
+  "MATERIAL",
+  "CONFECCIONADO",
+  "CONFECCIONADA",
+  "FABRICADO",
+  "FABRICADA",
+  "CAPACIDADE",
+  "FORMATO",
+  "TIPO",
+  "APROXIMADAMENTE",
+  "APROX",
 ]);
 
 function normalizarToken(token) {
@@ -120,7 +152,7 @@ function obterTokens(texto) {
   return normalizarTexto(texto)
     .split(" ")
     .map(normalizarToken)
-    .filter(token => {
+    .filter((token) => {
       if (!token || PALAVRAS_IGNORADAS.has(token)) {
         return false;
       }
@@ -164,7 +196,7 @@ function distanciaLevenshtein(a, b) {
       matriz[i][j] = Math.min(
         matriz[i - 1][j] + 1,
         matriz[i][j - 1] + 1,
-        matriz[i - 1][j - 1] + custo
+        matriz[i - 1][j - 1] + custo,
       );
     }
   }
@@ -211,54 +243,38 @@ function extrairCaracteristicas(texto) {
   const capacidades = [];
 
   // Dimensões: 40X28CM, 40 X 28 CM.
-  const regexDimensoes =
-    /(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)\s*(MM|CM|M)\b/g;
+  const regexDimensoes = /(\d+(?:\.\d+)?)\s*X\s*(\d+(?:\.\d+)?)\s*(MM|CM|M)\b/g;
 
   let resultado;
 
   while ((resultado = regexDimensoes.exec(original)) !== null) {
     const unidade = resultado[3];
 
-    const fator =
-      unidade === "M" ? 1000 :
-      unidade === "CM" ? 10 : 1;
+    const fator = unidade === "M" ? 1000 : unidade === "CM" ? 10 : 1;
 
     const a = Number(resultado[1]) * fator;
     const b = Number(resultado[2]) * fator;
 
     dimensoes.push(
-      [
-        Number(a.toFixed(4)),
-        Number(b.toFixed(4))
-      ].sort((x, y) => x - y)
+      [Number(a.toFixed(4)), Number(b.toFixed(4))].sort((x, y) => x - y),
     );
   }
 
-  const semDimensoes = original.replace(
-    regexDimensoes,
-    " "
-  );
+  const semDimensoes = original.replace(regexDimensoes, " ");
 
   // Medidas individuais: 13CM, 15CM, 4MM.
-  const regexMedidas =
-    /\b(\d+(?:\.\d+)?)\s*(MM|CM|M)\b/g;
+  const regexMedidas = /\b(\d+(?:\.\d+)?)\s*(MM|CM|M)\b/g;
 
   while ((resultado = regexMedidas.exec(semDimensoes)) !== null) {
-    const valor = converterParaMM(
-      resultado[1],
-      resultado[2]
-    );
+    const valor = converterParaMM(resultado[1], resultado[2]);
 
     if (valor !== null) {
-      medidasSimples.push(
-        Number(valor.toFixed(4))
-      );
+      medidasSimples.push(Number(valor.toFixed(4)));
     }
   }
 
   // Capacidade: 2000ML, 3500ML, 2L.
-  const regexCapacidade =
-    /\b(\d+(?:\.\d+)?)\s*(ML|LITROS?|L)\b/g;
+  const regexCapacidade = /\b(\d+(?:\.\d+)?)\s*(ML|LITROS?|L)\b/g;
 
   while ((resultado = regexCapacidade.exec(original)) !== null) {
     let valor = Number(resultado[1]);
@@ -267,15 +283,13 @@ function extrairCaracteristicas(texto) {
       valor *= 1000;
     }
 
-    capacidades.push(
-      Number(valor.toFixed(4))
-    );
+    capacidades.push(Number(valor.toFixed(4)));
   }
 
   return {
     dimensoes,
     medidasSimples: [...new Set(medidasSimples)],
-    capacidades: [...new Set(capacidades)]
+    capacidades: [...new Set(capacidades)],
   };
 }
 
@@ -290,51 +304,48 @@ function avaliarCaracteristicas(busca, candidato) {
   const resultado = {
     medidasCompativeis: null,
     dimensoesCompativeis: null,
-    capacidadesCompativeis: null
+    capacidadesCompativeis: null,
   };
 
   if (solicitadas.medidasSimples.length) {
-    resultado.medidasCompativeis =
-      cadastradas.medidasSimples.length
-        ? solicitadas.medidasSimples.every(medida =>
-            cadastradas.medidasSimples.includes(medida)
-          )
-        : null;
+    resultado.medidasCompativeis = cadastradas.medidasSimples.length
+      ? solicitadas.medidasSimples.every((medida) =>
+          cadastradas.medidasSimples.includes(medida),
+        )
+      : null;
   }
 
   if (solicitadas.dimensoes.length) {
-    resultado.dimensoesCompativeis =
-      cadastradas.dimensoes.length
-        ? solicitadas.dimensoes.every(dimensao =>
-            cadastradas.dimensoes.some(cadastrada =>
-              dimensao[0] === cadastrada[0] &&
-              dimensao[1] === cadastrada[1]
-            )
-          )
-        : null;
+    resultado.dimensoesCompativeis = cadastradas.dimensoes.length
+      ? solicitadas.dimensoes.every((dimensao) =>
+          cadastradas.dimensoes.some(
+            (cadastrada) =>
+              dimensao[0] === cadastrada[0] && dimensao[1] === cadastrada[1],
+          ),
+        )
+      : null;
   }
 
   if (solicitadas.capacidades.length) {
-    resultado.capacidadesCompativeis =
-      cadastradas.capacidades.length
-        ? solicitadas.capacidades.every(capacidade =>
-            cadastradas.capacidades.includes(capacidade)
-          )
-        : null;
+    resultado.capacidadesCompativeis = cadastradas.capacidades.length
+      ? solicitadas.capacidades.every((capacidade) =>
+          cadastradas.capacidades.includes(capacidade),
+        )
+      : null;
   }
 
-  const verificacoes = Object.values(resultado)
-    .filter(valor => valor !== null);
+  const verificacoes = Object.values(resultado).filter(
+    (valor) => valor !== null,
+  );
 
-  const compativeis = verificacoes.length
-    ? verificacoes.every(Boolean)
-    : null;
+  const compativeis = verificacoes.length ? verificacoes.every(Boolean) : null;
 
   return {
     ...resultado,
     compativeis,
-    possuiCaracteristicaNaoInformada:
-      Object.values(resultado).some(valor => valor === null)
+    possuiCaracteristicaNaoInformada: Object.values(resultado).some(
+      (valor) => valor === null,
+    ),
   };
 }
 
@@ -348,20 +359,20 @@ function avaliarCaracteristicas(busca, candidato) {
 const GRUPOS_ATRIBUTOS = [
   {
     nome: "formato",
-    opcoes: ["RETA", "CURVA"]
+    opcoes: ["RETA", "CURVA"],
   },
   {
     nome: "perfuracao",
-    opcoes: ["NAO PERFURANTE", "PERFURANTE"]
+    opcoes: ["NAO PERFURANTE", "PERFURANTE"],
   },
   {
     nome: "material",
-    opcoes: ["INOX", "ACO CARBONO"]
+    opcoes: ["INOX", "ACO CARBONO"],
   },
   {
     nome: "bolinha",
-    opcoes: ["COM BOLINHA", "SEM BOLINHA"]
-  }
+    opcoes: ["COM BOLINHA", "SEM BOLINHA"],
+  },
 ];
 
 function normalizarParaAtributo(texto) {
@@ -379,14 +390,14 @@ function avaliarAtributos(busca, candidato) {
   const naoConfirmados = [];
 
   for (const grupo of GRUPOS_ATRIBUTOS) {
-    const atributoSolicitado = grupo.opcoes.find(opcao =>
-      textoBusca.includes(opcao)
+    const atributoSolicitado = grupo.opcoes.find((opcao) =>
+      textoBusca.includes(opcao),
     );
 
     if (!atributoSolicitado) continue;
 
-    const atributoCadastrado = grupo.opcoes.find(opcao =>
-      textoCandidato.includes(opcao)
+    const atributoCadastrado = grupo.opcoes.find((opcao) =>
+      textoCandidato.includes(opcao),
     );
 
     if (!atributoCadastrado) {
@@ -402,7 +413,7 @@ function avaliarAtributos(busca, candidato) {
   return {
     compativel: divergencias.length === 0,
     divergencias,
-    naoConfirmados
+    naoConfirmados,
   };
 }
 
@@ -411,10 +422,7 @@ function avaliarAtributos(busca, candidato) {
 // ==========================================
 
 function pesoToken(token) {
-  if ([
-    "INOX", "AISI", "ACO",
-    "CIRURGICO", "CIRURGICA"
-  ].includes(token)) {
+  if (["INOX", "AISI", "ACO", "CIRURGICO", "CIRURGICA"].includes(token)) {
     return 0.65;
   }
 
@@ -428,20 +436,16 @@ function pesoToken(token) {
 function calcularSimilaridade(busca, candidato) {
   const tokensBusca = [...new Set(obterTokens(busca))];
 
-  const tokensNome = [
-    ...new Set(obterTokens(candidato.produto))
-  ];
+  const tokensNome = [...new Set(obterTokens(candidato.produto))];
 
-  const tokensKeywords = [
-    ...new Set(obterTokens(candidato.palavrasChave))
-  ];
+  const tokensKeywords = [...new Set(obterTokens(candidato.palavrasChave))];
 
   if (!tokensBusca.length) {
     return {
       score: 0,
       correspondencias: 0,
       coberturaNome: 0,
-      coberturaPalavrasChave: 0
+      coberturaPalavrasChave: 0,
     };
   }
 
@@ -456,12 +460,12 @@ function calcularSimilaridade(busca, candidato) {
 
     pesoTotal += peso;
 
-    const noNome = tokensNome.some(token =>
-      tokensParecidos(tokenBusca, token)
+    const noNome = tokensNome.some((token) =>
+      tokensParecidos(tokenBusca, token),
     );
 
-    const naKeyword = tokensKeywords.some(token =>
-      tokensParecidos(tokenBusca, token)
+    const naKeyword = tokensKeywords.some((token) =>
+      tokensParecidos(tokenBusca, token),
     );
 
     if (noNome || naKeyword) {
@@ -473,26 +477,20 @@ function calcularSimilaridade(busca, candidato) {
     if (naKeyword) correspondenciasKeyword++;
   }
 
-  const cobertura = pesoTotal
-    ? pesoCorrespondente / pesoTotal
-    : 0;
+  const cobertura = pesoTotal ? pesoCorrespondente / pesoTotal : 0;
 
-  const coberturaNome =
-    correspondenciasNome / tokensBusca.length;
+  const coberturaNome = correspondenciasNome / tokensBusca.length;
 
-  const coberturaPalavrasChave =
-    correspondenciasKeyword / tokensBusca.length;
+  const coberturaPalavrasChave = correspondenciasKeyword / tokensBusca.length;
 
   const score =
-    cobertura * 0.65 +
-    coberturaNome * 0.20 +
-    coberturaPalavrasChave * 0.15;
+    cobertura * 0.65 + coberturaNome * 0.2 + coberturaPalavrasChave * 0.15;
 
   return {
     score,
     correspondencias,
     coberturaNome,
-    coberturaPalavrasChave
+    coberturaPalavrasChave,
   };
 }
 
@@ -504,7 +502,7 @@ function extrairReferencia(texto) {
   const original = normalizarTexto(texto);
 
   const resultado = original.match(
-    /\b(?:REF|REFERENCIA|CODIGO|COD)\s+([A-Z0-9]+(?:\s*[-/]\s*[A-Z0-9]+)*)/
+    /\b(?:REF|REFERENCIA|CODIGO|COD)\s+([A-Z0-9]+(?:\s*[-/]\s*[A-Z0-9]+)*)/,
   );
 
   if (!resultado) return null;
@@ -558,7 +556,7 @@ function formatarPreco(valor) {
 
   return numero.toLocaleString("pt-BR", {
     minimumFractionDigits: 2,
-    maximumFractionDigits: 2
+    maximumFractionDigits: 2,
   });
 }
 
@@ -569,13 +567,13 @@ function formatarPreco(valor) {
 async function obterNomeAba(sheets, spreadsheetId, gid) {
   const resposta = await sheets.spreadsheets.get({
     spreadsheetId,
-    fields: "sheets.properties"
+    fields: "sheets.properties",
   });
 
   const abas = resposta.data.sheets || [];
 
-  const aba = abas.find(item =>
-    Number(item.properties.sheetId) === Number(gid)
+  const aba = abas.find(
+    (item) => Number(item.properties.sheetId) === Number(gid),
   );
 
   if (!aba) {
@@ -590,19 +588,14 @@ async function obterNomeAba(sheets, spreadsheetId, gid) {
 // ==========================================
 
 async function lerPlanilha(sheets, spreadsheetId, gid) {
-  const nomeAba = await obterNomeAba(
-    sheets,
-    spreadsheetId,
-    gid
-  );
+  const nomeAba = await obterNomeAba(sheets, spreadsheetId, gid);
 
-  const intervalo =
-    `'${nomeAba.replace(/'/g, "''")}'!A:Z`;
+  const intervalo = `'${nomeAba.replace(/'/g, "''")}'!A:Z`;
 
   const resposta = await sheets.spreadsheets.values.get({
     spreadsheetId,
     range: intervalo,
-    valueRenderOption: "UNFORMATTED_VALUE"
+    valueRenderOption: "UNFORMATTED_VALUE",
   });
 
   return resposta.data.values || [];
@@ -626,15 +619,13 @@ async function validarCNPJ(sheets, cnpj) {
   const linhas = await lerPlanilha(
     sheets,
     PLANILHA_CONTATOS_ID,
-    ABA_CONTATOS_GID
+    ABA_CONTATOS_GID,
   );
 
   return linhas.some((linha, indice) => {
     if (indice === 0) return false;
 
-    return linha.some(celula =>
-      limparCNPJ(celula) === cnpjLimpo
-    );
+    return linha.some((celula) => limparCNPJ(celula) === cnpjLimpo);
   });
 }
 
@@ -657,36 +648,51 @@ function obterDDD(telefone) {
 }
 
 function obterPlanilhaPorDDD(ddd) {
-  const dddsSP = [
-    "11", "12", "13", "14", "15",
-    "16", "17", "18", "19"
-  ];
+  const dddsSP = ["11", "12", "13", "14", "15", "16", "17", "18", "19"];
 
   const dddsRJ = [
-    "21", "22", "24",
-    "31", "32", "33", "34", "35", "37", "38",
-    "41", "42", "43", "44", "45", "46",
-    "47", "48", "49",
-    "51", "53", "54", "55"
+    "21",
+    "22",
+    "24",
+    "31",
+    "32",
+    "33",
+    "34",
+    "35",
+    "37",
+    "38",
+    "41",
+    "42",
+    "43",
+    "44",
+    "45",
+    "46",
+    "47",
+    "48",
+    "49",
+    "51",
+    "53",
+    "54",
+    "55",
   ];
 
   if (dddsSP.includes(ddd)) {
     return {
       id: PLANILHA_SP_ID,
-      gid: ABA_SP_GID
+      gid: ABA_SP_GID,
     };
   }
 
   if (dddsRJ.includes(ddd)) {
     return {
       id: PLANILHA_RJ_ID,
-      gid: ABA_RJ_GID
+      gid: ABA_RJ_GID,
     };
   }
 
   return {
     id: PLANILHA_DEMAIS_ID,
-    gid: ABA_DEMAIS_GID
+    gid: ABA_DEMAIS_GID,
   };
 }
 
@@ -700,7 +706,7 @@ function montarProduto(linha, numeroLinha, planilha) {
     referencia: String(linha[0] || "").trim(),
     produto: String(linha[1] || "").trim(),
     precoOriginal: linha[5],
-    palavrasChave: String(linha[6] || "").trim()
+    palavrasChave: String(linha[6] || "").trim(),
   };
 }
 
@@ -709,23 +715,16 @@ function montarProduto(linha, numeroLinha, planilha) {
 // ==========================================
 
 function avaliarCandidato(produtoInformado, item) {
-  const textoCatalogo =
-    `${item.produto} ${item.palavrasChave}`;
+  const textoCatalogo = `${item.produto} ${item.palavrasChave}`;
 
-  const similaridade = calcularSimilaridade(
-    produtoInformado,
-    item
-  );
+  const similaridade = calcularSimilaridade(produtoInformado, item);
 
   const caracteristicas = avaliarCaracteristicas(
     produtoInformado,
-    textoCatalogo
+    textoCatalogo,
   );
 
-  const atributos = avaliarAtributos(
-    produtoInformado,
-    textoCatalogo
-  );
+  const atributos = avaliarAtributos(produtoInformado, textoCatalogo);
 
   let score = similaridade.score;
 
@@ -752,22 +751,19 @@ function avaliarCandidato(produtoInformado, item) {
     atributos.naoConfirmados.length > 0;
 
   const possuiDivergencia =
-    caracteristicas.compativeis === false ||
-    atributos.divergencias.length > 0;
+    caracteristicas.compativeis === false || atributos.divergencias.length > 0;
 
   return {
     ...item,
     score,
     correspondencias: similaridade.correspondencias,
     medidasCompativeis: caracteristicas.compativeis,
-    dimensoesCompativeis:
-      caracteristicas.dimensoesCompativeis,
-    capacidadesCompativeis:
-      caracteristicas.capacidadesCompativeis,
+    dimensoesCompativeis: caracteristicas.dimensoesCompativeis,
+    capacidadesCompativeis: caracteristicas.capacidadesCompativeis,
     possuiCaracteristicaNaoInformada,
     possuiDivergencia,
     atributosNaoConfirmados: atributos.naoConfirmados,
-    atributosDivergentes: atributos.divergencias
+    atributosDivergentes: atributos.divergencias,
   };
 }
 
@@ -778,18 +774,13 @@ function avaliarCandidato(produtoInformado, item) {
 // BUSCA DE PRODUTOS POR REFERÊNCIA E NOME
 // ==========================================
 
-function buscarProduto(
-  linhas,
-  produtoInformado,
-  planilha,
-  idCatalogo = ""
-) {
+function buscarProduto(linhas, produtoInformado, planilha, idCatalogo = "") {
   const buscaOriginal = String(produtoInformado || "").trim();
   const busca = normalizarTexto(buscaOriginal);
 
   if (!busca && !idCatalogo) {
     return {
-      tipo: "nao_encontrado"
+      tipo: "nao_encontrado",
     };
   }
 
@@ -801,25 +792,18 @@ function buscarProduto(
     .slice(1)
     .map((linha, indice) => ({
       linha,
-      numeroLinha: indice + 2
+      numeroLinha: indice + 2,
     }))
-    .filter(item =>
-      item.linha[0] !== undefined &&
-      item.linha[0] !== "" ||
-      item.linha[1] !== undefined &&
-      item.linha[1] !== ""
+    .filter(
+      (item) =>
+        (item.linha[0] !== undefined && item.linha[0] !== "") ||
+        (item.linha[1] !== undefined && item.linha[1] !== ""),
     )
-    .map(item =>
-      montarProduto(
-        item.linha,
-        item.numeroLinha,
-        planilha
-      )
-    );
+    .map((item) => montarProduto(item.linha, item.numeroLinha, planilha));
 
   if (!produtos.length) {
     return {
-      tipo: "nao_encontrado"
+      tipo: "nao_encontrado",
     };
   }
 
@@ -832,20 +816,20 @@ function buscarProduto(
   // O ID identifica diretamente a linha selecionada.
 
   if (idCatalogo) {
-    const selecionado = produtos.find(item =>
-      item.id_catalogo === idCatalogo
+    const selecionado = produtos.find(
+      (item) => item.id_catalogo === idCatalogo,
     );
 
     if (!selecionado) {
       return {
-        tipo: "id_catalogo_invalido"
+        tipo: "id_catalogo_invalido",
       };
     }
 
     return {
       tipo: "encontrado",
       produto: selecionado,
-      confianca: 1
+      confianca: 1,
     };
   }
 
@@ -853,9 +837,7 @@ function buscarProduto(
   // 3. EXTRAIR REFERÊNCIA INFORMADA
   // ==========================================
 
-  let referenciaInformada = extrairReferencia(
-    buscaOriginal
-  );
+  let referenciaInformada = extrairReferencia(buscaOriginal);
 
   // Também reconhece formatos como:
   // "1 ABAIXA LÍNGUA"
@@ -867,13 +849,11 @@ function buscarProduto(
 
   if (!referenciaInformada) {
     const inicio = buscaOriginal.match(
-      /^\s*([A-Z0-9]+)\s*(?:[-:]\s*|\s+)(?=[A-ZÀ-Ú])/
+      /^\s*([A-Z0-9]+)\s*(?:[-:]\s*|\s+)(?=[A-ZÀ-Ú])/,
     );
 
     if (inicio) {
-      referenciaInformada = normalizarTexto(
-        inicio[1]
-      ).replace(/\s/g, "");
+      referenciaInformada = normalizarTexto(inicio[1]).replace(/\s/g, "");
     }
   }
 
@@ -882,13 +862,15 @@ function buscarProduto(
   // ==========================================
 
   if (referenciaInformada) {
-    const referenciaNormalizada =
-      normalizarTexto(referenciaInformada)
-        .replace(/\s/g, "");
+    const referenciaNormalizada = normalizarTexto(referenciaInformada).replace(
+      /\s/g,
+      "",
+    );
 
-    const encontrados = produtos.filter(item =>
-      normalizarTexto(item.referencia)
-        .replace(/\s/g, "") === referenciaNormalizada
+    const encontrados = produtos.filter(
+      (item) =>
+        normalizarTexto(item.referencia).replace(/\s/g, "") ===
+        referenciaNormalizada,
     );
 
     // ------------------------------------------
@@ -899,7 +881,7 @@ function buscarProduto(
       return {
         tipo: "encontrado",
         produto: encontrados[0],
-        confianca: 1
+        confianca: 1,
       };
     }
 
@@ -908,26 +890,25 @@ function buscarProduto(
     // ------------------------------------------
 
     if (encontrados.length > 1) {
-
       // Remove a referência do texto de pesquisa
       // para comparar o nome do produto.
       const nomeParaComparacao = buscaOriginal
         .replace(
           new RegExp(
             "^\\s*(?:REF(?:ERENCIA)?|COD(?:IGO)?)[\\s:.-]*" +
-            referenciaInformada.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-            "i"
+              referenciaInformada.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i",
           ),
-          ""
+          "",
         )
         .replace(
           new RegExp(
             "^\\s*" +
-            referenciaInformada.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
-            "\\s*(?:[-:]\\s*)?",
-            "i"
+              referenciaInformada.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") +
+              "\\s*(?:[-:]\\s*)?",
+            "i",
           ),
-          ""
+          "",
         )
         .trim();
 
@@ -939,30 +920,23 @@ function buscarProduto(
       // - Medidas e dimensões
       // - Atributos técnicos
 
-      const candidatos = encontrados.map(item =>
-        avaliarCandidato(nomeBusca, item)
+      const candidatos = encontrados.map((item) =>
+        avaliarCandidato(nomeBusca, item),
       );
 
-      candidatos.sort((a, b) =>
-        b.score - a.score
-      );
+      candidatos.sort((a, b) => b.score - a.score);
 
       const melhor = candidatos[0];
       const segundo = candidatos[1];
 
-      const diferenca = segundo
-        ? melhor.score - segundo.score
-        : 1;
+      const diferenca = segundo ? melhor.score - segundo.score : 1;
 
       // Verifica se o cliente informou características técnicas.
-      const caracteristicasSolicitadas =
-        extrairCaracteristicas(nomeBusca);
+      const caracteristicasSolicitadas = extrairCaracteristicas(nomeBusca);
 
-      const possuiMedida =
-        caracteristicasSolicitadas.medidasSimples.length > 0;
+      const possuiMedida = caracteristicasSolicitadas.medidasSimples.length > 0;
 
-      const possuiDimensao =
-        caracteristicasSolicitadas.dimensoes.length > 0;
+      const possuiDimensao = caracteristicasSolicitadas.dimensoes.length > 0;
 
       const possuiCapacidade =
         caracteristicasSolicitadas.capacidades.length > 0;
@@ -971,16 +945,13 @@ function buscarProduto(
       // que realmente foram solicitadas pelo cliente.
 
       const medidasConfirmadas =
-        !possuiMedida ||
-        melhor.medidasCompativeis === true;
+        !possuiMedida || melhor.medidasCompativeis === true;
 
       const dimensoesConfirmadas =
-        !possuiDimensao ||
-        melhor.dimensoesCompativeis === true;
+        !possuiDimensao || melhor.dimensoesCompativeis === true;
 
       const capacidadesConfirmadas =
-        !possuiCapacidade ||
-        melhor.capacidadesCompativeis === true;
+        !possuiCapacidade || melhor.capacidadesCompativeis === true;
 
       const atributosConfirmados =
         !melhor.atributosNaoConfirmados.length &&
@@ -997,8 +968,7 @@ function buscarProduto(
       // automaticamente uma variação.
 
       const nomeIdentificado =
-        nomeBusca !== buscaOriginal ||
-        nomeBusca.length > 0;
+        nomeBusca !== buscaOriginal || nomeBusca.length > 0;
 
       const altaConfianca =
         nomeIdentificado &&
@@ -1008,14 +978,14 @@ function buscarProduto(
         caracteristicasConfirmadas;
 
       if (altaConfianca) {
-        const produtoSelecionado = produtos.find(item =>
-          item.id_catalogo === melhor.id_catalogo
+        const produtoSelecionado = produtos.find(
+          (item) => item.id_catalogo === melhor.id_catalogo,
         );
 
         return {
           tipo: "encontrado",
           produto: produtoSelecionado,
-          confianca: Number(melhor.score.toFixed(3))
+          confianca: Number(melhor.score.toFixed(3)),
         };
       }
 
@@ -1024,7 +994,7 @@ function buscarProduto(
 
       return {
         tipo: "ambiguo",
-        candidatos: candidatos.slice(0, 5)
+        candidatos: candidatos.slice(0, 5),
       };
     }
   }
@@ -1035,25 +1005,25 @@ function buscarProduto(
 
   const buscaSemEspacos = busca.replace(/\s/g, "");
 
-  const porReferencia = produtos.filter(item =>
-    normalizarTexto(item.referencia)
-      .replace(/\s/g, "") === buscaSemEspacos
+  const porReferencia = produtos.filter(
+    (item) =>
+      normalizarTexto(item.referencia).replace(/\s/g, "") === buscaSemEspacos,
   );
 
   if (porReferencia.length === 1) {
     return {
       tipo: "encontrado",
       produto: porReferencia[0],
-      confianca: 1
+      confianca: 1,
     };
   }
 
   if (porReferencia.length > 1) {
     return {
       tipo: "ambiguo",
-      candidatos: porReferencia.slice(0, 5).map(item =>
-        avaliarCandidato(buscaOriginal, item)
-      )
+      candidatos: porReferencia
+        .slice(0, 5)
+        .map((item) => avaliarCandidato(buscaOriginal, item)),
     };
   }
 
@@ -1063,29 +1033,22 @@ function buscarProduto(
 
   const tokensBusca = obterTokens(buscaOriginal).join(" ");
 
-  const exatos = produtos.filter(item => {
+  const exatos = produtos.filter((item) => {
     const nome = obterTokens(item.produto).join(" ");
 
     return nome && nome === tokensBusca;
   });
 
   if (exatos.length === 1) {
-    const avaliado = avaliarCandidato(
-      buscaOriginal,
-      exatos[0]
-    );
+    const avaliado = avaliarCandidato(buscaOriginal, exatos[0]);
 
-    const caracteristicas =
-      extrairCaracteristicas(buscaOriginal);
+    const caracteristicas = extrairCaracteristicas(buscaOriginal);
 
-    const temMedida =
-      caracteristicas.medidasSimples.length > 0;
+    const temMedida = caracteristicas.medidasSimples.length > 0;
 
-    const temDimensao =
-      caracteristicas.dimensoes.length > 0;
+    const temDimensao = caracteristicas.dimensoes.length > 0;
 
-    const temCapacidade =
-      caracteristicas.capacidades.length > 0;
+    const temCapacidade = caracteristicas.capacidades.length > 0;
 
     const compativel =
       !avaliado.possuiDivergencia &&
@@ -1099,22 +1062,22 @@ function buscarProduto(
       return {
         tipo: "encontrado",
         produto: exatos[0],
-        confianca: 1
+        confianca: 1,
       };
     }
 
     return {
       tipo: "ambiguo",
-      candidatos: [avaliado]
+      candidatos: [avaliado],
     };
   }
 
   if (exatos.length > 1) {
     return {
       tipo: "ambiguo",
-      candidatos: exatos.slice(0, 5).map(item =>
-        avaliarCandidato(buscaOriginal, item)
-      )
+      candidatos: exatos
+        .slice(0, 5)
+        .map((item) => avaliarCandidato(buscaOriginal, item)),
     };
   }
 
@@ -1126,55 +1089,42 @@ function buscarProduto(
   // - Nome do produto na coluna B
   // - Palavras-chave na coluna G
 
-  const candidatos = produtos.map(item =>
-    avaliarCandidato(buscaOriginal, item)
+  const candidatos = produtos.map((item) =>
+    avaliarCandidato(buscaOriginal, item),
   );
 
-  candidatos.sort((a, b) =>
-    b.score - a.score
-  );
+  candidatos.sort((a, b) => b.score - a.score);
 
-  const relevantes = candidatos.filter(item =>
-    item.score >= 0.30 &&
-    item.correspondencias >= 1
+  const relevantes = candidatos.filter(
+    (item) => item.score >= 0.3 && item.correspondencias >= 1,
   );
 
   if (!relevantes.length) {
     return {
-      tipo: "nao_encontrado"
+      tipo: "nao_encontrado",
     };
   }
 
   const melhor = relevantes[0];
   const segundo = relevantes[1];
 
-  const diferenca = segundo
-    ? melhor.score - segundo.score
-    : 1;
+  const diferenca = segundo ? melhor.score - segundo.score : 1;
 
-  const caracteristicas =
-    extrairCaracteristicas(buscaOriginal);
+  const caracteristicas = extrairCaracteristicas(buscaOriginal);
 
-  const temMedida =
-    caracteristicas.medidasSimples.length > 0;
+  const temMedida = caracteristicas.medidasSimples.length > 0;
 
-  const temDimensao =
-    caracteristicas.dimensoes.length > 0;
+  const temDimensao = caracteristicas.dimensoes.length > 0;
 
-  const temCapacidade =
-    caracteristicas.capacidades.length > 0;
+  const temCapacidade = caracteristicas.capacidades.length > 0;
 
-  const medidasConfirmadas =
-    !temMedida ||
-    melhor.medidasCompativeis === true;
+  const medidasConfirmadas = !temMedida || melhor.medidasCompativeis === true;
 
   const dimensoesConfirmadas =
-    !temDimensao ||
-    melhor.dimensoesCompativeis === true;
+    !temDimensao || melhor.dimensoesCompativeis === true;
 
   const capacidadesConfirmadas =
-    !temCapacidade ||
-    melhor.capacidadesCompativeis === true;
+    !temCapacidade || melhor.capacidadesCompativeis === true;
 
   const atributosConfirmados =
     !melhor.atributosNaoConfirmados.length &&
@@ -1198,14 +1148,14 @@ function buscarProduto(
     caracteristicasConfirmadas;
 
   if (altaConfianca) {
-    const produtoSelecionado = produtos.find(item =>
-      item.id_catalogo === melhor.id_catalogo
+    const produtoSelecionado = produtos.find(
+      (item) => item.id_catalogo === melhor.id_catalogo,
     );
 
     return {
       tipo: "encontrado",
       produto: produtoSelecionado,
-      confianca: Number(melhor.score.toFixed(3))
+      confianca: Number(melhor.score.toFixed(3)),
     };
   }
 
@@ -1215,7 +1165,7 @@ function buscarProduto(
 
   return {
     tipo: "ambiguo",
-    candidatos: relevantes.slice(0, 5)
+    candidatos: relevantes.slice(0, 5),
   };
 }
 
@@ -1224,14 +1174,14 @@ function buscarProduto(
 // ==========================================
 
 function formatarCandidatos(candidatos) {
-  return candidatos.map(item => ({
+  return candidatos.map((item) => ({
     id_catalogo: item.id_catalogo,
     referencia: item.referencia,
     produto: item.produto,
     medidas_compativeis: item.medidasCompativeis,
     dimensoes_compativeis: item.dimensoesCompativeis,
     capacidades_compativeis: item.capacidadesCompativeis,
-    score: Number(item.score.toFixed(3))
+    score: Number(item.score.toFixed(3)),
   }));
 }
 
@@ -1240,16 +1190,13 @@ function formatarCandidatos(candidatos) {
 // ==========================================
 
 module.exports = async (req, res) => {
-  res.setHeader(
-    "Content-Type",
-    "application/json; charset=utf-8"
-  );
+  res.setHeader("Content-Type", "application/json; charset=utf-8");
 
   if (req.method !== "GET") {
     return res.status(405).json({
       status: "error",
       success: false,
-      message: "Método não permitido. Utilize GET."
+      message: "Método não permitido. Utilize GET.",
     });
   }
 
@@ -1263,7 +1210,7 @@ module.exports = async (req, res) => {
       return res.status(400).json({
         status: "error",
         success: false,
-        message: "Informe produto, telefone e CNPJ."
+        message: "Informe produto, telefone e CNPJ.",
       });
     }
 
@@ -1277,7 +1224,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         status: "cnpj_invalido",
         success: false,
-        message: "CNPJ não encontrado no cadastro de clientes."
+        message: "CNPJ não encontrado no cadastro de clientes.",
       });
     }
 
@@ -1289,7 +1236,7 @@ module.exports = async (req, res) => {
       return res.status(200).json({
         status: "error",
         success: false,
-        message: "Telefone inválido ou sem DDD."
+        message: "Telefone inválido ou sem DDD.",
       });
     }
 
@@ -1299,20 +1246,11 @@ module.exports = async (req, res) => {
 
     // 4. LER PLANILHA
 
-    const linhas = await lerPlanilha(
-      sheets,
-      planilha.id,
-      planilha.gid
-    );
+    const linhas = await lerPlanilha(sheets, planilha.id, planilha.gid);
 
     // 5. BUSCAR PRODUTO
 
-    const resultado = buscarProduto(
-      linhas,
-      produto,
-      planilha,
-      idCatalogo
-    );
+    const resultado = buscarProduto(linhas, produto, planilha, idCatalogo);
 
     // 6. IDENTIFICADOR DE VARIAÇÃO INVÁLIDO
 
@@ -1322,7 +1260,8 @@ module.exports = async (req, res) => {
         success: false,
         id_catalogo: idCatalogo,
         ddd,
-        message: "A variação selecionada não foi localizada no catálogo atual. Faça uma nova busca pelo produto."
+        message:
+          "A variação selecionada não foi localizada no catálogo atual. Faça uma nova busca pelo produto.",
       });
     }
 
@@ -1334,23 +1273,46 @@ module.exports = async (req, res) => {
         success: false,
         produto,
         ddd,
-        message: `Não localizei o produto: ${produto}.`
+        message: `Não localizei o produto: ${produto}.`,
       });
     }
 
     // 8. MÚLTIPLAS POSSIBILIDADES
 
     if (resultado.tipo === "ambiguo") {
+      const candidatos = formatarCandidatos(resultado.candidatos);
+
+      // Monta uma lista legível para a IA apresentar ao cliente.
+      const opcoes = candidatos.map((item, indice) => ({
+        opcao: indice + 1,
+        id_catalogo: item.id_catalogo,
+        referencia: item.referencia,
+        produto: item.produto,
+        descricao: `Opção ${indice + 1}: ${item.produto} (Ref. ${item.referencia})`,
+      }));
+
+      const listaOpcoes = opcoes.map((item) => item.descricao).join("\n");
+
+      const message =
+        `Encontrei ${opcoes.length} possibilidades para o produto "${produto}".\n\n` +
+        `${listaOpcoes}\n\n` +
+        `Apresente todas as opções ao cliente, identificando cada uma pelo número, nome e referência. ` +
+        `Não informe preços nesta etapa. Aguarde o cliente escolher uma opção.`;
+
       return res.status(200).json({
         status: "multiple_matches",
         success: false,
         produto_solicitado: produto,
         ddd,
-        candidatos: formatarCandidatos(
-          resultado.candidatos
-        ),
-        message:
-          "Encontrei possíveis produtos correspondentes. Apresente as opções ao cliente e solicite a confirmação antes de informar o preço."
+
+        // Dados estruturados para a IA.
+        candidatos,
+
+        // Opções numeradas para facilitar a escolha.
+        opcoes,
+
+        // Lista textual para facilitar a leitura pelo HighLevel.
+        message,
       });
     }
 
@@ -1358,9 +1320,7 @@ module.exports = async (req, res) => {
 
     const produtoEncontrado = resultado.produto;
 
-    const precoFormatado = formatarPreco(
-      produtoEncontrado.precoOriginal
-    );
+    const precoFormatado = formatarPreco(produtoEncontrado.precoOriginal);
 
     const ipi = IPI_PADRAO;
 
@@ -1378,20 +1338,16 @@ module.exports = async (req, res) => {
       preco: precoFormatado,
       ipi,
       ddd,
-      message
+      message,
     });
-
   } catch (erro) {
-    console.error(
-      "ERRO NA API BUSCAR:",
-      erro.stack || erro.message
-    );
+    console.error("ERRO NA API BUSCAR:", erro.stack || erro.message);
 
     return res.status(500).json({
       status: "error",
       success: false,
       message:
-        "Ocorreu um erro ao consultar o produto. Encaminhe para atendimento humano."
+        "Ocorreu um erro ao consultar o produto. Encaminhe para atendimento humano.",
     });
   }
 };
