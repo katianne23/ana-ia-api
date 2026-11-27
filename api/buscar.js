@@ -751,58 +751,17 @@ function obterPlanilhaPorDDD(ddd) {
 // MONTAR PRODUTO
 // ==========================================
 
-// function montarProduto(linha, numeroLinha, planilha) {
-//   return {
-//     id_catalogo: normalizarIdCatalogo(
-//       `${planilha.id}:${planilha.gid}:${numeroLinha}`,
-//     ),
-//     referencia: String(linha[0] || "").trim(),
-//     produto: String(linha[1] || "").trim(),
-//     precoOriginal: linha[5],
-//     palavrasChave: String(linha[6] || "").trim(),
-//   };
-// }
-
-
 function montarProduto(linha, numeroLinha, planilha) {
-  const idCatalogo = normalizarIdCatalogo(
-    `${planilha.id}:${planilha.gid}:${numeroLinha}`,
-  );
-
-  const produto = String(linha[1] || "").trim();
-  const referencia = String(linha[0] || "").trim();
-  const precoOriginal = linha[5];
-
-  // Auditoria específica da referência 163
-  if (referencia === "163") {
-    console.log("========== AUDITORIA REF 163 ==========");
-    console.log({
-      linhaFisica: numeroLinha,
-      referencia,
-      produto,
-      colunaA: linha[0],
-      colunaB: linha[1],
-      colunaC: linha[2],
-      colunaD: linha[3],
-      colunaE: linha[4],
-      colunaF: linha[5],
-      colunaF_tipo: typeof linha[5],
-      colunaG: linha[6],
-      precoConvertido: converterPreco(precoOriginal),
-      idCatalogo,
-    });
-    console.log("========================================");
-  }
-
   return {
-    id_catalogo: idCatalogo,
-    referencia,
-    produto,
-    precoOriginal,
+    id_catalogo: normalizarIdCatalogo(
+      `${planilha.id}:${planilha.gid}:${numeroLinha}`,
+    ),
+    referencia: String(linha[0] || "").trim(),
+    produto: String(linha[1] || "").trim(),
+    precoOriginal: linha[5],
     palavrasChave: String(linha[6] || "").trim(),
   };
 }
-
 
 // ==========================================
 // AVALIAR CANDIDATO
